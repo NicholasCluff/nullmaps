@@ -1,30 +1,166 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { activeDynamicLayerIds, dynamicLayers, mapStore } from '../../stores/mapStore.js';
+	import { searchFeatures, createDebouncedSearch, type SearchResult } from '../../services/searchService.js';
+	import SearchResults from '../search/SearchResults.svelte';
+
 	export let onMenuToggle = () => {};
 
 	let isSearchExpanded = false;
 	let searchQuery = '';
+	let searchResults: SearchResult[] = [];
+	let isSearching = false;
+	let searchError: string | null = null;
+	let showResults = false;
+	let searchInput: HTMLInputElement;
+
+	// Create debounced search function
+	const debouncedSearch = createDebouncedSearch(performSearch, 300);
 
 	function toggleSearch() {
 		isSearchExpanded = !isSearchExpanded;
 		if (!isSearchExpanded) {
-			searchQuery = '';
+			clearSearch();
+		} else {
+			// Focus the input when search is expanded
+			setTimeout(() => searchInput?.focus(), 100);
 		}
 	}
 
-	function handleSearch() {
-		if (searchQuery.trim()) {
-			// TODO: Implement search functionality
-			console.log('Searching for:', searchQuery);
+	function clearSearch() {
+		searchQuery = '';
+		searchResults = [];
+		searchError = null;
+		showResults = false;
+		isSearching = false;
+	}
+
+	async function performSearch(query: string) {
+		if (!query.trim()) {
+			clearSearch();
+			return;
 		}
+
+		// Get active layers to search
+		const activeLayersList = Array.from($activeDynamicLayerIds)
+			.map(id => $dynamicLayers.get(id))
+			.filter(layer => layer !== undefined);
+
+		if (activeLayersList.length === 0) {
+			searchError = 'No active layers to search. Please enable some feature layers first.';
+			searchResults = [];
+			showResults = true;
+			isSearching = false;
+			return;
+		}
+
+		isSearching = true;
+		searchError = null;
+		showResults = true;
+
+		try {
+			const response = await searchFeatures(activeLayersList, {
+				text: query,
+				maxResults: 5, // Limit results per layer
+				returnGeometry: true,
+				spatialReference: 4326 // Request coordinates in WGS84 for MapLibre
+			});
+
+			searchResults = response.results;
+			isSearching = false;
+
+			// Handle partial errors
+			if (response.errors.length > 0) {
+				console.warn('Some layers had search errors:', response.errors);
+				
+				// If we have results despite errors, show a warning
+				if (response.results.length > 0) {
+					const errorCount = response.errors.length;
+					const totalLayers = activeLayersList.length;
+					console.info(`Search completed with ${errorCount}/${totalLayers} layer errors`);
+				} else {
+					// No results and errors - show error message
+					const errorMessages = response.errors
+						.slice(0, 3) // Show max 3 error messages
+						.map(err => err.error)
+						.join(', ');
+					searchError = `Search errors: ${errorMessages}${response.errors.length > 3 ? '...' : ''}`;
+					return;
+				}
+			}
+
+			if (searchResults.length === 0) {
+				searchError = response.errors.length > 0 
+					? 'No results found. Some layers had errors.'
+					: 'No features found matching your search.';
+			}
+		} catch (error) {
+			console.error('Search failed:', error);
+			
+			// Provide more specific error messages
+			if (error instanceof Error) {
+				if (error.message.includes('Network')) {
+					searchError = 'Network error. Please check your connection and try again.';
+				} else if (error.message.includes('timeout')) {
+					searchError = 'Search timed out. Please try a more specific search term.';
+				} else {
+					searchError = `Search failed: ${error.message}`;
+				}
+			} else {
+				searchError = 'Search failed. Please try again.';
+			}
+			
+			searchResults = [];
+			isSearching = false;
+		}
+	}
+
+	function handleSearchInput() {
+		debouncedSearch(searchQuery);
 	}
 
 	function handleSearchKeydown(event: KeyboardEvent) {
 		if (event.key === 'Enter') {
-			handleSearch();
+			// Prevent default form submission
+			event.preventDefault();
+			// If there's a single result, select it
+			if (searchResults.length === 1) {
+				handleResultClick(searchResults[0]);
+			}
 		} else if (event.key === 'Escape') {
-			toggleSearch();
+			if (showResults && (searchResults.length > 0 || searchError)) {
+				clearSearch();
+			} else {
+				toggleSearch();
+			}
 		}
 	}
+
+	function handleResultClick(result: SearchResult) {
+		console.log('Selected feature:', result);
+		// Update map store with selected result
+		mapStore.selectSearchResult(result);
+		mapStore.zoomToSearchResult(result);
+		clearSearch();
+		// Keep search expanded for potential next search
+		// but clear results
+	}
+
+	// Close search results when clicking outside
+	function handleDocumentClick(event: MouseEvent) {
+		const target = event.target as HTMLElement;
+		const searchContainer = target.closest('.search-container');
+		if (!searchContainer && showResults) {
+			showResults = false;
+		}
+	}
+
+	onMount(() => {
+		document.addEventListener('click', handleDocumentClick);
+		return () => {
+			document.removeEventListener('click', handleDocumentClick);
+		};
+	});
 </script>
 
 <header class="app-header">
@@ -54,26 +190,43 @@
 		<!-- Search interface -->
 		<div class="search-container" class:expanded={isSearchExpanded}>
 			{#if isSearchExpanded}
-				<input
-					type="text"
-					bind:value={searchQuery}
-					placeholder="Search locations, properties..."
-					class="search-input"
-					onkeydown={handleSearchKeydown}
-				/>
-				<button class="search-close-button" onclick={toggleSearch} aria-label="Close search">
-					<svg
-						width="20"
-						height="20"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<line x1="18" y1="6" x2="6" y2="18"></line>
-						<line x1="6" y1="6" x2="18" y2="18"></line>
-					</svg>
-				</button>
+				<div class="search-input-wrapper">
+					<input
+						bind:this={searchInput}
+						type="text"
+						bind:value={searchQuery}
+						placeholder="Search features in active layers..."
+						class="search-input"
+						class:loading={isSearching}
+						onkeydown={handleSearchKeydown}
+						oninput={handleSearchInput}
+						autocomplete="off"
+					/>
+					<button class="search-close-button" onclick={toggleSearch} aria-label="Close search">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<line x1="18" y1="6" x2="6" y2="18"></line>
+							<line x1="6" y1="6" x2="18" y2="18"></line>
+						</svg>
+					</button>
+					
+					{#if showResults}
+						<SearchResults
+							results={searchResults}
+							loading={isSearching}
+							error={searchError}
+							query={searchQuery}
+							onResultClick={handleResultClick}
+							onClear={clearSearch}
+						/>
+					{/if}
+				</div>
 			{:else}
 				<button class="search-button" onclick={toggleSearch} aria-label="Open search">
 					<svg
@@ -181,6 +334,13 @@
 		margin-left: 12px;
 	}
 
+	.search-input-wrapper {
+		position: relative;
+		flex: 1;
+		display: flex;
+		align-items: center;
+	}
+
 	.search-button {
 		display: flex;
 		align-items: center;
@@ -220,6 +380,13 @@
 
 	.search-input::placeholder {
 		color: #9ca3af;
+	}
+
+	.search-input.loading {
+		background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="%23d1d5db" stroke-width="2"/><circle cx="8" cy="8" r="6" fill="none" stroke="%233b82f6" stroke-width="2" stroke-dasharray="18" stroke-dashoffset="18"><animateTransform attributeName="transform" type="rotate" values="0 8 8;360 8 8" dur="1s" repeatCount="indefinite"/></circle></svg>');
+		background-repeat: no-repeat;
+		background-position: right 40px center;
+		padding-right: 60px;
 	}
 
 	.search-close-button {

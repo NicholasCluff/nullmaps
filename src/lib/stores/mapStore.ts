@@ -2,6 +2,7 @@ import { writable, derived } from 'svelte/store';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import { TASMANIA_BOUNDS, SERVICE_GROUPS, type LayerConfig } from '../config/listServices.js';
 import type { SearchableLayer } from '../services/listService.js';
+import type { SearchResult } from '../services/searchService.js';
 
 interface MapState {
 	map: MapLibreMap | null;
@@ -19,6 +20,10 @@ interface MapState {
 	dynamicLayerOrder: string[]; // Track layer rendering order (bottom to top)
 	favoriteLayerIds: Set<string>;
 	layersLoading: boolean;
+	// Search state
+	searchResults: SearchResult[];
+	selectedSearchResult: SearchResult | null;
+	searchResultsVisible: boolean;
 }
 
 interface PersistedMapState {
@@ -116,7 +121,11 @@ const mapState = writable<MapState>({
 	activeDynamicLayerIds: new Set(savedState?.activeDynamicLayerIds || []),
 	dynamicLayerOrder: savedState?.dynamicLayerOrder || [],
 	favoriteLayerIds: initialFavoriteLayerIds,
-	layersLoading: false
+	layersLoading: false,
+	// Search state
+	searchResults: [],
+	selectedSearchResult: null,
+	searchResultsVisible: false
 });
 
 // Export the main state store
@@ -137,6 +146,9 @@ export const activeDynamicLayerIds = derived(mapState, ($state) => $state.active
 export const dynamicLayerOrder = derived(mapState, ($state) => $state.dynamicLayerOrder);
 export const favoriteLayerIds = derived(mapState, ($state) => $state.favoriteLayerIds);
 export const layersLoading = derived(mapState, ($state) => $state.layersLoading);
+export const searchResults = derived(mapState, ($state) => $state.searchResults);
+export const selectedSearchResult = derived(mapState, ($state) => $state.selectedSearchResult);
+export const searchResultsVisible = derived(mapState, ($state) => $state.searchResultsVisible);
 
 // Map management functions
 export const mapStore = {
@@ -666,6 +678,175 @@ export const mapStore = {
 	isLayerFavorite(layerId: string): boolean {
 		const currentState = this.getCurrentState();
 		return currentState.favoriteLayerIds.has(layerId);
+	},
+
+	// Search management
+	setSearchResults(results: SearchResult[]) {
+		mapState.update((state) => ({
+			...state,
+			searchResults: results,
+			searchResultsVisible: results.length > 0
+		}));
+	},
+
+	selectSearchResult(result: SearchResult | null) {
+		mapState.update((state) => ({
+			...state,
+			selectedSearchResult: result
+		}));
+
+		// Add search result marker to map if a result is selected
+		if (result && result.geometry) {
+			this.addSearchResultToMap(result);
+		} else {
+			this.clearSearchResultsFromMap();
+		}
+	},
+
+	setSearchResultsVisible(visible: boolean) {
+		mapState.update((state) => ({
+			...state,
+			searchResultsVisible: visible
+		}));
+	},
+
+	clearSearchResults() {
+		mapState.update((state) => ({
+			...state,
+			searchResults: [],
+			selectedSearchResult: null,
+			searchResultsVisible: false
+		}));
+		this.clearSearchResultsFromMap();
+	},
+
+	addSearchResultToMap(result: SearchResult) {
+		const currentState = this.getCurrentState();
+		const map = currentState.map;
+		if (!map || !result.geometry) return;
+
+		// Remove existing search result layers
+		this.clearSearchResultsFromMap();
+
+		const sourceId = 'search-result-source';
+		const layerId = 'search-result-layer';
+
+		// Add source for the search result
+		if (result.geometry.type === 'Point') {
+			const [lng, lat] = result.geometry.coordinates as [number, number];
+			
+			map.addSource(sourceId, {
+				type: 'geojson',
+				data: {
+					type: 'Feature',
+					geometry: {
+						type: 'Point',
+						coordinates: [lng, lat]
+					},
+					properties: {
+						name: result.displayName || 'Search Result',
+						layerName: result.layerName
+					}
+				}
+			});
+
+			// Add marker layer
+			map.addLayer({
+				id: layerId,
+				type: 'circle',
+				source: sourceId,
+				paint: {
+					'circle-radius': 8,
+					'circle-color': '#ef4444',
+					'circle-stroke-color': '#ffffff',
+					'circle-stroke-width': 2
+				}
+			});
+
+			// Add popup on click
+			map.on('click', layerId, (e) => {
+				if (e.features && e.features[0]) {
+					const feature = e.features[0];
+					const coordinates = (feature.geometry as any).coordinates.slice();
+					const name = feature.properties?.name || 'Search Result';
+					const layerName = feature.properties?.layerName || '';
+					
+					// Create a simple popup using native browser APIs for now
+					// This avoids import issues with MapLibre GL popup
+					const popupElement = document.createElement('div');
+					popupElement.innerHTML = `
+						<div style="
+							background: white;
+							padding: 8px 12px;
+							border-radius: 6px;
+							box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+							font-size: 14px;
+							max-width: 200px;
+							position: absolute;
+							z-index: 1000;
+							transform: translate(-50%, -100%);
+							margin-top: -10px;
+							pointer-events: none;
+						">
+							<strong>${name}</strong>
+							${layerName ? `<br><small style="color: #666;">From: ${layerName}</small>` : ''}
+						</div>
+					`;
+					
+					// For now, just log the popup content - we'll improve this later
+					console.log('Search result clicked:', { name, layerName, coordinates });
+				}
+			});
+
+			// Change cursor on hover
+			map.on('mouseenter', layerId, () => {
+				map.getCanvas().style.cursor = 'pointer';
+			});
+
+			map.on('mouseleave', layerId, () => {
+				map.getCanvas().style.cursor = '';
+			});
+		}
+	},
+
+	clearSearchResultsFromMap() {
+		const currentState = this.getCurrentState();
+		const map = currentState.map;
+		if (!map) return;
+
+		const sourceId = 'search-result-source';
+		const layerId = 'search-result-layer';
+
+		// Remove layer and source if they exist
+		if (map.getLayer(layerId)) {
+			map.removeLayer(layerId);
+		}
+		if (map.getSource(sourceId)) {
+			map.removeSource(sourceId);
+		}
+	},
+
+	// Zoom to search result
+	zoomToSearchResult(result: SearchResult) {
+		if (result.bbox) {
+			const [minX, minY, maxX, maxY] = result.bbox;
+			this.fitToBounds([[minX, minY], [maxX, maxY]]);
+		} else if (result.geometry?.type === 'Point') {
+			const [lng, lat] = result.geometry.coordinates as [number, number];
+			
+			// Validate coordinates
+			if (isNaN(lng) || isNaN(lat) || !isFinite(lng) || !isFinite(lat)) {
+				console.error('Invalid search result coordinates:', { lng, lat, result: result.displayName });
+				return;
+			}
+			
+			// Check if coordinates are in reasonable range for Tasmania
+			if (lng < 140 || lng > 155 || lat < -45 || lat > -38) {
+				console.warn('Search result coordinates outside Tasmania bounds:', { lng, lat, result: result.displayName });
+			}
+			
+			this.flyTo([lng, lat], 16);
+		}
 	},
 
 	// State persistence

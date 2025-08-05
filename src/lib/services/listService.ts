@@ -124,6 +124,9 @@ export async function fetchMapService(serviceName: string): Promise<ArcGISMapSer
 					geometryType?: string;
 					minScale?: number;
 					maxScale?: number;
+					defaultVisibility?: boolean;
+					parentLayerId?: number;
+					subLayerIds?: number[];
 				}) => ({
 					id: layer.id,
 					name: layer.name,
