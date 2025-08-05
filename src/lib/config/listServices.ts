@@ -75,9 +75,7 @@ export const BASEMAP_SERVICES: ServiceGroup = {
 };
 
 // All service groups (only basemaps - LIST layers are handled dynamically)
-export const SERVICE_GROUPS: ServiceGroup[] = [
-	BASEMAP_SERVICES
-];
+export const SERVICE_GROUPS: ServiceGroup[] = [BASEMAP_SERVICES];
 
 // Helper functions
 export function getLayerById(layerId: string): LayerConfig | undefined {

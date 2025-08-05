@@ -1,22 +1,37 @@
 <script lang="ts">
-	import { mapStore, activeDynamicLayerIds, dynamicLayers, dynamicLayerOrder } from '../../stores/mapStore.js';
+	import {
+		mapStore,
+		activeDynamicLayerIds,
+		dynamicLayers,
+		dynamicLayerOrder
+	} from '../../stores/mapStore.js';
 	import { flip } from 'svelte/animate';
 	import { dndzone } from 'svelte-dnd-action';
 
 	let drawerOpen = false;
 
-	// Convert active layers to draggable format using the stored order
-	$: activeLayersList = $dynamicLayerOrder
-		.filter(layerId => $activeDynamicLayerIds.has(layerId))
-		.map(layerId => {
-			const layer = $dynamicLayers.get(layerId);
-			return {
-				id: layerId,
-				name: layer?.name || layerId,
-				serviceName: layer?.serviceName || '',
-				type: layer?.type || 'Feature Layer'
-			};
-		}).reverse(); // Reverse to show top-most layers first in the drawer
+	let activeLayersList: Array<{
+		id: string;
+		name: string;
+		serviceName: string;
+		type: string;
+	}> = [];
+
+	// Update active layers list when store changes
+	$: {
+		activeLayersList = $dynamicLayerOrder
+			.filter((layerId) => $activeDynamicLayerIds.has(layerId))
+			.map((layerId) => {
+				const layer = $dynamicLayers.get(layerId);
+				return {
+					id: layerId,
+					name: layer?.name || layerId,
+					serviceName: layer?.serviceName || '',
+					type: layer?.type || 'Feature Layer'
+				};
+			})
+			.reverse(); // Reverse to show top-most layers first in the drawer
+	}
 
 	function handleDndConsider(e: CustomEvent) {
 		activeLayersList = e.detail.items;
@@ -24,9 +39,9 @@
 
 	function handleDndFinalize(e: CustomEvent) {
 		activeLayersList = e.detail.items;
-		
+
 		// Update layer order in map - reverse because we show top layers first
-		const newOrder = activeLayersList.map(item => item.id).reverse();
+		const newOrder = activeLayersList.map((item) => item.id).reverse();
 		mapStore.reorderDynamicLayers(newOrder);
 	}
 
@@ -41,10 +56,17 @@
 
 <!-- Drawer Toggle Button -->
 <button class="drawer-toggle" class:open={drawerOpen} onclick={toggleDrawer}>
-	<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-		<rect x="3" y="3" width="18" height="18" rx="2"/>
-		<path d="M9 3v18"/>
-		<path d="m16 15-3-3 3-3"/>
+	<svg
+		width="20"
+		height="20"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+	>
+		<rect x="3" y="3" width="18" height="18" rx="2" />
+		<path d="M9 3v18" />
+		<path d="m16 15-3-3 3-3" />
 	</svg>
 	<span>Layers ({activeLayersList.length})</span>
 </button>
@@ -54,8 +76,15 @@
 	<div class="drawer-header">
 		<h3>Active Layers</h3>
 		<p class="drawer-description">Drag to reorder • Top layers render above</p>
-		<button class="close-button" onclick={toggleDrawer}>
-			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+		<button class="close-button" onclick={toggleDrawer} aria-label="Close layers drawer">
+			<svg
+				width="16"
+				height="16"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+			>
 				<line x1="18" y1="6" x2="6" y2="18"></line>
 				<line x1="6" y1="6" x2="18" y2="18"></line>
 			</svg>
@@ -65,16 +94,23 @@
 	<div class="drawer-content">
 		{#if activeLayersList.length === 0}
 			<div class="empty-state">
-				<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-					<path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/>
-					<path d="M3 17v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2"/>
-					<path d="M3 12h18"/>
+				<svg
+					width="48"
+					height="48"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+				>
+					<path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2" />
+					<path d="M3 17v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2" />
+					<path d="M3 12h18" />
 				</svg>
 				<p>No active layers</p>
 				<span>Enable layers from the panel to manage their order</span>
 			</div>
 		{:else}
-			<div 
+			<div
 				class="layer-list"
 				use:dndzone={{
 					items: activeLayersList,
@@ -86,18 +122,22 @@
 				onfinalize={handleDndFinalize}
 			>
 				{#each activeLayersList as layer (layer.id)}
-					<div 
-						class="layer-item"
-						animate:flip={{ duration: 200 }}
-					>
+					<div class="layer-item" animate:flip={{ duration: 200 }}>
 						<div class="drag-handle">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<circle cx="9" cy="12" r="1"/>
-								<circle cx="9" cy="5" r="1"/>
-								<circle cx="9" cy="19" r="1"/>
-								<circle cx="15" cy="12" r="1"/>
-								<circle cx="15" cy="5" r="1"/>
-								<circle cx="15" cy="19" r="1"/>
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
+								<circle cx="9" cy="12" r="1" />
+								<circle cx="9" cy="5" r="1" />
+								<circle cx="9" cy="19" r="1" />
+								<circle cx="15" cy="12" r="1" />
+								<circle cx="15" cy="5" r="1" />
+								<circle cx="15" cy="19" r="1" />
 							</svg>
 						</div>
 
@@ -109,12 +149,19 @@
 							</div>
 						</div>
 
-						<button 
+						<button
 							class="remove-button"
 							onclick={() => removeLayer(layer.id)}
 							aria-label="Remove layer"
 						>
-							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+							>
 								<line x1="18" y1="6" x2="6" y2="18"></line>
 								<line x1="6" y1="6" x2="18" y2="18"></line>
 							</svg>
@@ -128,7 +175,12 @@
 
 <!-- Backdrop -->
 {#if drawerOpen}
-	<div class="drawer-backdrop" onclick={toggleDrawer}></div>
+	<button
+		class="drawer-backdrop"
+		onclick={toggleDrawer}
+		onkeydown={(e) => e.key === 'Escape' && toggleDrawer()}
+		aria-label="Close layers drawer"
+	></button>
 {/if}
 
 <style>
@@ -375,6 +427,9 @@
 		right: 0;
 		bottom: 0;
 		background: rgba(0, 0, 0, 0.3);
+		border: none;
+		padding: 0;
+		cursor: pointer;
 		z-index: 1050;
 	}
 
@@ -383,7 +438,7 @@
 		.layers-drawer {
 			width: 100vw;
 		}
-		
+
 		.drawer-toggle {
 			right: 16px;
 			bottom: 70px;

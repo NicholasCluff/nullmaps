@@ -2,9 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		mapStore,
-		layers,
 		activeLayerIds,
-		dynamicLayers,
 		activeDynamicLayerIds,
 		favoriteLayerIds,
 		layersLoading
@@ -43,7 +41,11 @@
 	// Update filtered layers when search query or dynamic layer state changes
 	$: updateFilteredLayers(searchQuery, showDynamicLayers, allDynamicLayers);
 
-	function updateFilteredLayers(query = searchQuery, showDynamic = showDynamicLayers, layers = allDynamicLayers) {
+	function updateFilteredLayers(
+		query = searchQuery,
+		showDynamic = showDynamicLayers,
+		layers = allDynamicLayers
+	) {
 		if (!showDynamic || layers.length === 0) {
 			filteredLayers = [];
 			groupedLayers = new Map();
@@ -52,11 +54,11 @@
 
 		if (query === 'favorites:') {
 			// Show only favorite layers
-			filteredLayers = layers.filter(layer => $favoriteLayerIds.has(layer.id));
+			filteredLayers = layers.filter((layer) => $favoriteLayerIds.has(layer.id));
 		} else {
 			filteredLayers = searchLayers(layers, query);
 		}
-		
+
 		groupedLayers = groupLayersByService(filteredLayers);
 	}
 
@@ -76,12 +78,6 @@
 		mapStore.toggleDynamicLayer(layerId);
 	}
 
-	function handleOpacityChange(layerId: string, event: Event) {
-		const target = event.target as HTMLInputElement;
-		const opacity = parseFloat(target.value);
-		mapStore.setLayerOpacity(layerId, opacity);
-	}
-
 	function handleDynamicOpacityChange(layerId: string, event: Event) {
 		const target = event.target as HTMLInputElement;
 		const opacity = parseFloat(target.value);
@@ -94,11 +90,6 @@
 
 	function isDynamicLayerActive(layerId: string): boolean {
 		return $activeDynamicLayerIds.has(layerId);
-	}
-
-	function getLayerOpacity(layerId: string): number {
-		const layer = $layers.get(layerId);
-		return layer ? layer.opacity : 1.0;
 	}
 
 	function toggleDynamicLayersView() {
@@ -189,13 +180,22 @@
 			<!-- Favorites filter -->
 			{#if $favoriteLayerIds.size > 0}
 				<div class="favorites-section">
-					<button 
+					<button
 						class="favorites-filter"
 						class:active={searchQuery === 'favorites:'}
-						onclick={() => searchQuery = searchQuery === 'favorites:' ? '' : 'favorites:'}
+						onclick={() => (searchQuery = searchQuery === 'favorites:' ? '' : 'favorites:')}
 					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"></polygon>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<polygon
+								points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+							></polygon>
 						</svg>
 						Show Favorites ({$favoriteLayerIds.size})
 					</button>
@@ -262,10 +262,21 @@
 													class="favorite-button"
 													class:favorited={$favoriteLayerIds.has(layer.id)}
 													onclick={() => mapStore.toggleLayerFavorite(layer.id)}
-													aria-label={$favoriteLayerIds.has(layer.id) ? 'Remove from favorites' : 'Add to favorites'}
+													aria-label={$favoriteLayerIds.has(layer.id)
+														? 'Remove from favorites'
+														: 'Add to favorites'}
 												>
-													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-														<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"></polygon>
+													<svg
+														width="16"
+														height="16"
+														viewBox="0 0 24 24"
+														fill="none"
+														stroke="currentColor"
+														stroke-width="2"
+													>
+														<polygon
+															points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+														></polygon>
 													</svg>
 												</button>
 
@@ -346,11 +357,12 @@
 								<div class="layer-control">
 									<label class="layer-toggle">
 										<input
-											type="checkbox"
+											type="radio"
+											name="basemap"
 											checked={isLayerActive(layer.id)}
 											onchange={() => handleLayerToggle(layer.id)}
 										/>
-										<span class="checkbox-custom"></span>
+										<span class="radio-custom"></span>
 										<span class="layer-name">{layer.name}</span>
 									</label>
 
@@ -654,15 +666,16 @@
 		margin-right: 12px;
 	}
 
-	.layer-toggle input[type='checkbox'] {
+	.layer-toggle input[type='checkbox'],
+	.layer-toggle input[type='radio'] {
 		display: none;
 	}
 
-	.checkbox-custom {
+	.checkbox-custom,
+	.radio-custom {
 		width: 18px;
 		height: 18px;
 		border: 2px solid #d1d5db;
-		border-radius: 4px;
 		margin-right: 12px;
 		margin-top: 2px;
 		position: relative;
@@ -670,7 +683,16 @@
 		flex-shrink: 0;
 	}
 
-	.layer-toggle input[type='checkbox']:checked + .checkbox-custom {
+	.checkbox-custom {
+		border-radius: 4px;
+	}
+
+	.radio-custom {
+		border-radius: 50%;
+	}
+
+	.layer-toggle input[type='checkbox']:checked + .checkbox-custom,
+	.layer-toggle input[type='radio']:checked + .radio-custom {
 		background: #2563eb;
 		border-color: #2563eb;
 	}
@@ -685,6 +707,17 @@
 		border: solid white;
 		border-width: 0 2px 2px 0;
 		transform: rotate(45deg);
+	}
+
+	.layer-toggle input[type='radio']:checked + .radio-custom::after {
+		content: '';
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: white;
 	}
 
 	.layer-name {

@@ -2,39 +2,27 @@
 	import { onMount } from 'svelte';
 	import { MapLibre, RasterTileSource, RasterLayer } from 'svelte-maplibre';
 	import type { Map as MapLibreMap } from 'maplibre-gl';
-	import { mapStore, isLoading, error, activeDynamicLayerIds, dynamicLayers } from '../../stores/mapStore.js';
-	import { TASMANIA_BOUNDS, BASEMAP_SERVICES } from '../../config/listServices.js';
+	import {
+		mapStore,
+		isLoading,
+		error,
+		activeDynamicLayerIds,
+		dynamicLayers,
+		activeLayerIds,
+		layers,
+		mapState
+	} from '../../stores/mapStore.js';
+	import { TASMANIA_BOUNDS } from '../../config/listServices.js';
 	import 'maplibre-gl/dist/maplibre-gl.css';
 
 	let map: MapLibreMap | undefined;
 
-	// Map style with CartoDB basemap for better global coverage
+	// Empty map style - basemaps are handled through the layer system
 	const mapStyle = {
 		version: 8 as const,
 		name: 'NullMaps Tasmania',
-		sources: {
-			'carto-light': {
-				type: 'raster' as const,
-				tiles: [
-					'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-					'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-					'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-					'https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-				],
-				tileSize: 256,
-				attribution: '© <a href="https://carto.com/attributions">CARTO</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-			}
-		},
-		layers: [
-			{
-				id: 'carto-light-layer',
-				type: 'raster' as const,
-				source: 'carto-light',
-				paint: {
-					'raster-opacity': 1.0
-				}
-			}
-		]
+		sources: {},
+		layers: []
 	};
 
 	function handleMapLoad() {
@@ -45,7 +33,7 @@
 
 		// Add click handler for feature info
 		map.on('click', handleMapClick);
-		
+
 		// Add error handler
 		map.on('error', handleMapError);
 	}
@@ -117,22 +105,44 @@
 		projection={{ type: 'globe' }}
 		bind:map
 	>
-		<!-- Dynamic layers from LIST services -->
-		{#each Array.from($activeDynamicLayerIds) as layerId}
-			{@const layer = $dynamicLayers.get(layerId)}
-			{#if layer}
-				{@const exportUrl = `${layer.serviceUrl}/export?bbox={bbox-epsg-3857}&bboxSR=3857&layers=show:${layer.layerId}&layerDefs=&size=256%2C256&imageSR=3857&format=png&transparent=true&dpi=96&time=&layerTimeOptions=&dynamicLayers=&gdbVersion=&mapScale=&rotation=&datumTransformations=&layerParameterValues=&mapRangeValues=&layerRangeValues=&f=image`}
-				
-				<RasterTileSource id={`${layerId}-source`} tiles={[exportUrl]} tileSize={256}>
-					<RasterLayer
-						id={layerId}
-						paint={{
-							'raster-opacity': 0.8
-						}}
-					/>
-				</RasterTileSource>
-			{/if}
-		{/each}
+		{#if $mapState.isLoaded}
+			<!-- Basemap layers -->
+			{#each Array.from($activeLayerIds) as layerId (layerId)}
+				{@const layer = $layers.get(layerId)}
+				{#if layer && layerId.startsWith('carto-')}
+					<RasterTileSource
+						id={`${layerId}-source`}
+						tiles={[layer.url]}
+						tileSize={256}
+						attribution="© <a href='https://carto.com/attributions'>CARTO</a> © <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"
+					>
+						<RasterLayer
+							id={layerId}
+							paint={{
+								'raster-opacity': layer.opacity
+							}}
+						/>
+					</RasterTileSource>
+				{/if}
+			{/each}
+
+			<!-- Dynamic layers from LIST services -->
+			{#each Array.from($activeDynamicLayerIds) as layerId (layerId)}
+				{@const layer = $dynamicLayers.get(layerId)}
+				{#if layer}
+					{@const exportUrl = `${layer.serviceUrl}/export?bbox={bbox-epsg-3857}&bboxSR=3857&layers=show:${layer.layerId}&layerDefs=&size=256%2C256&imageSR=3857&format=png&transparent=true&dpi=96&time=&layerTimeOptions=&dynamicLayers=&gdbVersion=&mapScale=&rotation=&datumTransformations=&layerParameterValues=&mapRangeValues=&layerRangeValues=&f=image`}
+
+					<RasterTileSource id={`${layerId}-source`} tiles={[exportUrl]} tileSize={256}>
+						<RasterLayer
+							id={layerId}
+							paint={{
+								'raster-opacity': 0.8
+							}}
+						/>
+					</RasterTileSource>
+				{/if}
+			{/each}
+		{/if}
 	</MapLibre>
 </div>
 

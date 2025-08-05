@@ -78,8 +78,8 @@ export async function fetchPublicServices(): Promise<string[]> {
 
 		// Extract service names and filter for MapServer type
 		servicesListCache = data.services
-			.filter((service: any) => service.type === 'MapServer')
-			.map((service: any) => service.name);
+			.filter((service: { type: string; name: string }) => service.type === 'MapServer')
+			.map((service: { type: string; name: string }) => service.name);
 
 		return servicesListCache!;
 	} catch (error) {
@@ -115,18 +115,28 @@ export async function fetchMapService(serviceName: string): Promise<ArcGISMapSer
 			serviceUrl,
 			name: data.mapName || serviceName,
 			description: data.description || data.serviceDescription,
-			layers: data.layers.map((layer: any) => ({
-				id: layer.id,
-				name: layer.name,
-				type: layer.type || 'Feature Layer',
-				description: layer.description,
-				geometryType: layer.geometryType,
-				minScale: layer.minScale || 0,
-				maxScale: layer.maxScale || 0,
-				defaultVisibility: layer.defaultVisibility || false,
-				parentLayerId: layer.parentLayerId,
-				subLayerIds: layer.subLayerIds
-			})),
+			layers: data.layers.map(
+				(layer: {
+					id: number;
+					name: string;
+					type?: string;
+					description?: string;
+					geometryType?: string;
+					minScale?: number;
+					maxScale?: number;
+				}) => ({
+					id: layer.id,
+					name: layer.name,
+					type: layer.type || 'Feature Layer',
+					description: layer.description,
+					geometryType: layer.geometryType,
+					minScale: layer.minScale || 0,
+					maxScale: layer.maxScale || 0,
+					defaultVisibility: layer.defaultVisibility || false,
+					parentLayerId: layer.parentLayerId,
+					subLayerIds: layer.subLayerIds
+				})
+			),
 			spatialReference: data.spatialReference,
 			initialExtent: data.initialExtent
 		};

@@ -35,6 +35,7 @@ interface PersistedMapState {
 const STORAGE_KEY = 'nullmaps-state';
 
 function saveStateToStorage(state: PersistedMapState): void {
+	if (typeof window === 'undefined') return; // Skip on server
 	try {
 		localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 	} catch (error) {
@@ -43,6 +44,7 @@ function saveStateToStorage(state: PersistedMapState): void {
 }
 
 function loadStateFromStorage(): Partial<PersistedMapState> | null {
+	if (typeof window === 'undefined') return null; // Skip on server
 	try {
 		const saved = localStorage.getItem(STORAGE_KEY);
 		return saved ? JSON.parse(saved) : null;
@@ -53,8 +55,8 @@ function loadStateFromStorage(): Partial<PersistedMapState> | null {
 }
 
 // Initialize layer configurations with saved state
-function initializeLayers(): { 
-	layers: Map<string, LayerConfig>; 
+function initializeLayers(): {
+	layers: Map<string, LayerConfig>;
 	activeLayerIds: Set<string>;
 	favoriteLayerIds: Set<string>;
 } {
@@ -68,8 +70,8 @@ function initializeLayers(): {
 	SERVICE_GROUPS.forEach((group) => {
 		group.layers.forEach((layer) => {
 			layers.set(layer.id, { ...layer });
-			if (layer.visible && !savedState?.activeLayerIds) {
-				// Use default visibility if no saved state
+			// Use default visibility if no saved state
+			if (layer.visible && !savedState) {
 				activeLayerIds.add(layer.id);
 			}
 		});
@@ -77,17 +79,23 @@ function initializeLayers(): {
 
 	// Apply saved state if available
 	if (savedState) {
-		savedState.activeLayerIds?.forEach(id => activeLayerIds.add(id));
-		savedState.favoriteLayerIds?.forEach(id => favoriteLayerIds.add(id));
+		// Clear default selections when applying saved state
+		activeLayerIds.clear();
+		savedState.activeLayerIds?.forEach((id) => {
+			if (layers.has(id)) {
+				activeLayerIds.add(id);
+			}
+		});
+		savedState.favoriteLayerIds?.forEach((id) => favoriteLayerIds.add(id));
 	}
 
 	return { layers, activeLayerIds, favoriteLayerIds };
 }
 
-const { 
-	layers: initialLayers, 
-	activeLayerIds: initialActiveLayerIds, 
-	favoriteLayerIds: initialFavoriteLayerIds 
+const {
+	layers: initialLayers,
+	activeLayerIds: initialActiveLayerIds,
+	favoriteLayerIds: initialFavoriteLayerIds
 } = initializeLayers();
 
 // Load saved state for initialization
@@ -110,6 +118,9 @@ const mapState = writable<MapState>({
 	favoriteLayerIds: initialFavoriteLayerIds,
 	layersLoading: false
 });
+
+// Export the main state store
+export { mapState };
 
 // Create derived stores for reactive access
 export const map = derived(mapState, ($state) => $state.map);
@@ -147,10 +158,10 @@ export const mapStore = {
 							zoom: map.getZoom(),
 							bearing: map.getBearing()
 						};
-						
+
 						// Save to localStorage
 						this.saveState();
-						
+
 						return newState;
 					});
 				});
@@ -164,12 +175,27 @@ export const mapStore = {
 	},
 
 	setLoaded(loaded: boolean) {
-		mapState.update((state) => ({
-			...state,
-			isLoaded: loaded,
-			isLoading: loaded ? false : state.isLoading,
-			error: loaded ? null : state.error
-		}));
+		mapState.update((state) => {
+			const newState = {
+				...state,
+				isLoaded: loaded,
+				isLoading: loaded ? false : state.isLoading,
+				error: loaded ? null : state.error
+			};
+
+			// When map is loaded, initialize active dynamic layers
+			// Basemaps are handled declaratively by MapContainer
+			if (loaded && state.map) {
+				setTimeout(() => {
+					// Add all active dynamic layers
+					for (const layerId of state.activeDynamicLayerIds) {
+						this.addDynamicLayerToMap(layerId);
+					}
+				}, 0);
+			}
+
+			return newState;
+		});
 	},
 
 	setError(error: string | null) {
@@ -198,7 +224,7 @@ export const mapStore = {
 						newLayers.set(id, { ...l });
 					}
 				}
-				
+
 				// Then activate the selected basemap
 				newActiveLayerIds.add(layerId);
 				layer.visible = true;
@@ -221,8 +247,9 @@ export const mapStore = {
 				activeLayerIds: newActiveLayerIds
 			};
 
-			// Update map if available
-			if (state.map && state.isLoaded) {
+			// Update map if available (only for non-basemap layers)
+			// Basemaps are handled declaratively by MapContainer
+			if (state.map && state.isLoaded && !layerId.startsWith('carto-')) {
 				setTimeout(() => this.updateMapLayer(layerId), 0);
 			}
 
@@ -284,10 +311,29 @@ export const mapStore = {
 
 		// Add source if it doesn't exist
 		if (!map.getSource(layerId)) {
+			// Handle different tile URL formats
+			let tileUrls: string[];
+
+			if (layerId.startsWith('carto-')) {
+				// CartoDB layers use direct tile URLs
+				tileUrls = [
+					layer.url.replace('a.basemaps', 'a.basemaps'),
+					layer.url.replace('a.basemaps', 'b.basemaps'),
+					layer.url.replace('a.basemaps', 'c.basemaps'),
+					layer.url.replace('a.basemaps', 'd.basemaps')
+				];
+			} else {
+				// LIST service layers use tile endpoint
+				tileUrls = [`${layer.url}/tile/{z}/{y}/{x}`];
+			}
+
 			map.addSource(layerId, {
 				type: 'raster',
-				tiles: [`${layer.url}/tile/{z}/{y}/{x}`],
-				tileSize: 256
+				tiles: tileUrls,
+				tileSize: 256,
+				attribution: layerId.startsWith('carto-')
+					? '© <a href="https://carto.com/attributions">CARTO</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+					: undefined
 			});
 		}
 
@@ -296,16 +342,19 @@ export const mapStore = {
 			// Find the first feature layer to insert basemap layers before it
 			// Feature layers have IDs that contain underscores (service_layerId format)
 			const mapLayers = map.getStyle().layers;
-			const firstFeatureLayerId = mapLayers.find(l => l.id.includes('_'))?.id;
-			
-			map.addLayer({
-				id: layerId,
-				type: 'raster',
-				source: layerId,
-				paint: {
-					'raster-opacity': layer.opacity
-				}
-			}, firstFeatureLayerId); // Insert before first feature layer, or at top if none
+			const firstFeatureLayerId = mapLayers.find((l) => l.id.includes('_'))?.id;
+
+			map.addLayer(
+				{
+					id: layerId,
+					type: 'raster',
+					source: layerId,
+					paint: {
+						'raster-opacity': layer.opacity
+					}
+				},
+				firstFeatureLayerId
+			); // Insert before first feature layer, or at top if none
 		}
 	},
 
@@ -415,7 +464,7 @@ export const mapStore = {
 			if (state.activeDynamicLayerIds.has(layerId)) {
 				// Remove layer
 				newActiveDynamicLayerIds.delete(layerId);
-				newDynamicLayerOrder = newDynamicLayerOrder.filter(id => id !== layerId);
+				newDynamicLayerOrder = newDynamicLayerOrder.filter((id) => id !== layerId);
 			} else {
 				// Add layer - append to end (will render on top)
 				newActiveDynamicLayerIds.add(layerId);
@@ -470,10 +519,13 @@ export const mapStore = {
 		if (!map || !layer) return;
 
 		const sourceId = `${layerId}-source`;
-		
+
 		// Determine if this is a vector or raster layer based on geometry type
-		const isVectorLayer = layer.geometryType && 
-			['esriGeometryPoint', 'esriGeometryPolyline', 'esriGeometryPolygon'].includes(layer.geometryType);
+		const isVectorLayer =
+			layer.geometryType &&
+			['esriGeometryPoint', 'esriGeometryPolyline', 'esriGeometryPolygon'].includes(
+				layer.geometryType
+			);
 
 		// Add source if it doesn't exist
 		if (!map.getSource(sourceId)) {
@@ -534,7 +586,7 @@ export const mapStore = {
 
 			// Remove all dynamic layers from map
 			const currentLayers = Array.from(state.activeDynamicLayerIds);
-			currentLayers.forEach(layerId => {
+			currentLayers.forEach((layerId) => {
 				if (map.getLayer(layerId)) {
 					map.removeLayer(layerId);
 				}
@@ -542,19 +594,21 @@ export const mapStore = {
 
 			// Re-add layers in the new order (bottom to top)
 			// First layer in newOrder should be at the bottom, last should be at the top
-			newOrder.forEach(layerId => {
+			newOrder.forEach((layerId) => {
 				const layer = state.dynamicLayers.get(layerId);
 				if (layer && state.activeDynamicLayerIds.has(layerId)) {
 					// Find the first feature layer to insert before it
 					const mapLayers = map.getStyle().layers;
-					const firstFeatureLayerId = mapLayers.find(l => l.id.includes('_') && l.id !== layerId)?.id;
-					
+					const firstFeatureLayerId = mapLayers.find(
+						(l) => l.id.includes('_') && l.id !== layerId
+					)?.id;
+
 					const sourceId = `${layerId}-source`;
-					
+
 					// Add source if it doesn't exist
 					if (!map.getSource(sourceId)) {
 						const exportUrl = `${layer.serviceUrl}/export?bbox={bbox-epsg-3857}&bboxSR=3857&layers=show:${layer.layerId}&layerDefs=&size=256%2C256&imageSR=3857&format=png&transparent=true&dpi=96&time=&layerTimeOptions=&dynamicLayers=&gdbVersion=&mapScale=&rotation=&datumTransformations=&layerParameterValues=&mapRangeValues=&layerRangeValues=&f=image`;
-						
+
 						map.addSource(sourceId, {
 							type: 'raster',
 							tiles: [exportUrl],
@@ -564,14 +618,17 @@ export const mapStore = {
 
 					// Add layer
 					if (!map.getLayer(layerId)) {
-						map.addLayer({
-							id: layerId,
-							type: 'raster',
-							source: sourceId,
-							paint: {
-								'raster-opacity': 0.8
-							}
-						}, firstFeatureLayerId);
+						map.addLayer(
+							{
+								id: layerId,
+								type: 'raster',
+								source: sourceId,
+								paint: {
+									'raster-opacity': 0.8
+								}
+							},
+							firstFeatureLayerId
+						);
 					}
 				}
 			});
@@ -587,7 +644,7 @@ export const mapStore = {
 	toggleLayerFavorite(layerId: string) {
 		mapState.update((state) => {
 			const newFavoriteLayerIds = new Set(state.favoriteLayerIds);
-			
+
 			if (newFavoriteLayerIds.has(layerId)) {
 				newFavoriteLayerIds.delete(layerId);
 			} else {
