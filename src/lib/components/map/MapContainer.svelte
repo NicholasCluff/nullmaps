@@ -8,22 +8,13 @@
 		error,
 		activeDynamicLayerIds,
 		dynamicLayers,
-		activeLayerIds,
-		layers,
+		currentBasemapStyle,
 		mapState
 	} from '../../stores/mapStore.js';
 	import { TASMANIA_BOUNDS } from '../../config/listServices.js';
 	import 'maplibre-gl/dist/maplibre-gl.css';
 
 	let map: MapLibreMap | undefined;
-
-	// Empty map style - basemaps are handled through the layer system
-	const mapStyle = {
-		version: 8 as const,
-		name: 'NullMaps Tasmania',
-		sources: {},
-		layers: []
-	};
 
 	function handleMapLoad() {
 		if (!map) return;
@@ -94,7 +85,7 @@
 	{/if}
 
 	<MapLibre
-		style={mapStyle}
+		style={$currentBasemapStyle}
 		center={TASMANIA_BOUNDS.center}
 		zoom={6}
 		class="maplibre-map"
@@ -106,26 +97,6 @@
 		bind:map
 	>
 		{#if $mapState.isLoaded}
-			<!-- Basemap layers -->
-			{#each Array.from($activeLayerIds) as layerId (layerId)}
-				{@const layer = $layers.get(layerId)}
-				{#if layer && layerId.startsWith('carto-')}
-					<RasterTileSource
-						id={`${layerId}-source`}
-						tiles={[layer.url]}
-						tileSize={256}
-						attribution="© <a href='https://carto.com/attributions'>CARTO</a> © <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"
-					>
-						<RasterLayer
-							id={layerId}
-							paint={{
-								'raster-opacity': layer.opacity
-							}}
-						/>
-					</RasterTileSource>
-				{/if}
-			{/each}
-
 			<!-- Dynamic layers from LIST services -->
 			{#each Array.from($activeDynamicLayerIds) as layerId (layerId)}
 				{@const layer = $dynamicLayers.get(layerId)}

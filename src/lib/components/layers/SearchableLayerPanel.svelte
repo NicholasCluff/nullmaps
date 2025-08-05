@@ -2,12 +2,12 @@
 	import { onMount } from 'svelte';
 	import {
 		mapStore,
-		activeLayerIds,
+		activeBasemap,
 		activeDynamicLayerIds,
 		favoriteLayerIds,
 		layersLoading
 	} from '../../stores/mapStore.js';
-	import { SERVICE_GROUPS } from '../../config/listServices.js';
+	import { BASEMAP_STYLES, type BasemapId } from '../../config/listServices.js';
 	import {
 		loadAllLayers,
 		searchLayers,
@@ -77,8 +77,8 @@
 		}
 	}
 
-	function handleLayerToggle(layerId: string) {
-		mapStore.toggleLayer(layerId);
+	function handleBasemapChange(basemapId: BasemapId) {
+		mapStore.setBasemap(basemapId);
 	}
 
 	function handleDynamicLayerToggle(layerId: string) {
@@ -91,8 +91,8 @@
 		mapStore.setDynamicLayerOpacity(layerId, opacity);
 	}
 
-	function isLayerActive(layerId: string): boolean {
-		return $activeLayerIds.has(layerId);
+	function isBasemapActive(basemapId: BasemapId): boolean {
+		return $activeBasemap === basemapId;
 	}
 
 	function isDynamicLayerActive(layerId: string): boolean {
@@ -104,7 +104,7 @@
 	}
 
 	// Calculate active layer counts
-	$: basemapActiveCount = $activeLayerIds.size;
+	$: basemapActiveCount = 1; // Always one active basemap
 	$: dynamicActiveCount = $activeDynamicLayerIds.size;
 	$: favoritesCount = $favoriteLayerIds.size;
 </script>
@@ -193,20 +193,25 @@
 		<div class="layer-groups">
 			<div class="layer-group">
 				<div class="layer-list">
-					{#each SERVICE_GROUPS[0].layers as layer (layer.id)}
+					{#each Object.values(BASEMAP_STYLES) as basemap (basemap.id)}
 						<div class="layer-item compact">
 							<div class="layer-control">
 								<label class="layer-toggle">
 									<input
 										type="radio"
 										name="basemap"
-										checked={isLayerActive(layer.id)}
-										onchange={() => handleLayerToggle(layer.id)}
+										checked={isBasemapActive(basemap.id)}
+										onchange={() => handleBasemapChange(basemap.id)}
 									/>
 									<span class="radio-custom"></span>
-									<span class="layer-name">{layer.name}</span>
+									<span class="layer-name">{basemap.name}</span>
 								</label>
 							</div>
+							{#if basemap.description}
+								<div class="layer-description">
+									{basemap.description}
+								</div>
+							{/if}
 						</div>
 					{/each}
 				</div>

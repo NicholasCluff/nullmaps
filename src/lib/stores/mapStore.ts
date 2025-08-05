@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import type { Map as MapLibreMap } from 'maplibre-gl';
-import { TASMANIA_BOUNDS, SERVICE_GROUPS, type LayerConfig } from '../config/listServices.js';
+import { TASMANIA_BOUNDS, SERVICE_GROUPS, BASEMAP_STYLES, DEFAULT_BASEMAP, type LayerConfig, type BasemapId } from '../config/listServices.js';
 import type { SearchableLayer } from '../services/listService.js';
 import type { SearchResult } from '../services/searchService.js';
 
@@ -12,6 +12,9 @@ interface MapState {
 	center: [number, number];
 	zoom: number;
 	bearing: number;
+	// Declarative basemap handling
+	activeBasemap: BasemapId;
+	// Legacy layer system (to be phased out)
 	layers: Map<string, LayerConfig>;
 	activeLayerIds: Set<string>;
 	// Dynamic layers from LIST services
@@ -27,6 +30,7 @@ interface MapState {
 }
 
 interface PersistedMapState {
+	activeBasemap: BasemapId;
 	activeLayerIds: string[];
 	activeDynamicLayerIds: string[];
 	dynamicLayerOrder: string[];
@@ -115,6 +119,9 @@ const mapState = writable<MapState>({
 	center: savedState?.center || TASMANIA_BOUNDS.center,
 	zoom: savedState?.zoom || TASMANIA_BOUNDS.zoom,
 	bearing: savedState?.bearing || 0,
+	// Declarative basemap handling
+	activeBasemap: savedState?.activeBasemap || DEFAULT_BASEMAP,
+	// Legacy layer system
 	layers: initialLayers,
 	activeLayerIds: initialActiveLayerIds,
 	dynamicLayers: new Map(),
@@ -149,6 +156,12 @@ export const layersLoading = derived(mapState, ($state) => $state.layersLoading)
 export const searchResults = derived(mapState, ($state) => $state.searchResults);
 export const selectedSearchResult = derived(mapState, ($state) => $state.selectedSearchResult);
 export const searchResultsVisible = derived(mapState, ($state) => $state.searchResultsVisible);
+export const activeBasemap = derived(mapState, ($state) => $state.activeBasemap);
+
+// Derive the current basemap style URL
+export const currentBasemapStyle = derived(activeBasemap, ($activeBasemap) => 
+	BASEMAP_STYLES[$activeBasemap].url
+);
 
 // Map management functions
 export const mapStore = {
@@ -214,160 +227,16 @@ export const mapStore = {
 		mapState.update((state) => ({ ...state, error, isLoading: false }));
 	},
 
-	// Layer management
+	// Legacy layer management (kept for compatibility during transition)
+	// Note: Basemaps are now handled declaratively via the style attribute
 	toggleLayer(layerId: string) {
-		mapState.update((state) => {
-			const layer = state.layers.get(layerId);
-			if (!layer) return state;
-
-			const newLayers = new Map(state.layers);
-			const newActiveLayerIds = new Set(state.activeLayerIds);
-
-			// Check if this is a basemap layer (CartoDB layers)
-			const isBasemap = layerId.startsWith('carto-');
-
-			if (isBasemap) {
-				// For basemaps, use radio button behavior - only one active at a time
-				// First deactivate all other basemaps
-				for (const [id, l] of state.layers) {
-					if (id.startsWith('carto-') && id !== layerId) {
-						newActiveLayerIds.delete(id);
-						l.visible = false;
-						newLayers.set(id, { ...l });
-					}
-				}
-
-				// Then activate the selected basemap
-				newActiveLayerIds.add(layerId);
-				layer.visible = true;
-			} else {
-				// For non-basemap layers, use checkbox behavior
-				if (state.activeLayerIds.has(layerId)) {
-					newActiveLayerIds.delete(layerId);
-					layer.visible = false;
-				} else {
-					newActiveLayerIds.add(layerId);
-					layer.visible = true;
-				}
-			}
-
-			newLayers.set(layerId, { ...layer });
-
-			const newState = {
-				...state,
-				layers: newLayers,
-				activeLayerIds: newActiveLayerIds
-			};
-
-			// Update map if available (only for non-basemap layers)
-			// Basemaps are handled declaratively by MapContainer
-			if (state.map && state.isLoaded && !layerId.startsWith('carto-')) {
-				setTimeout(() => this.updateMapLayer(layerId), 0);
-			}
-
-			// Save to localStorage
-			setTimeout(() => this.saveState(), 0);
-
-			return newState;
-		});
+		// For backwards compatibility - basemaps now use setBasemap()
+		console.warn('toggleLayer is deprecated, use setBasemap() for basemap changes');
 	},
 
 	setLayerOpacity(layerId: string, opacity: number) {
-		mapState.update((state) => {
-			const layer = state.layers.get(layerId);
-			if (!layer) return state;
-
-			const newLayers = new Map(state.layers);
-			const updatedLayer = { ...layer, opacity: Math.max(0, Math.min(1, opacity)) };
-			newLayers.set(layerId, updatedLayer);
-
-			const newState = { ...state, layers: newLayers };
-
-			// Update map if available
-			if (state.map && state.isLoaded) {
-				setTimeout(() => this.updateMapLayer(layerId), 0);
-			}
-
-			return newState;
-		});
-	},
-
-	updateMapLayer(layerId: string) {
-		const currentState = this.getCurrentState();
-		const map = currentState.map;
-		const layer = currentState.layers.get(layerId);
-		if (!map || !layer) return;
-
-		const mapLayerExists = map.getLayer(layerId);
-
-		if (layer.visible && !mapLayerExists) {
-			// Add layer to map
-			this.addLayerToMap(layerId);
-		} else if (!layer.visible && mapLayerExists) {
-			// Remove layer from map
-			map.removeLayer(layerId);
-			if (map.getSource(layerId)) {
-				map.removeSource(layerId);
-			}
-		} else if (layer.visible && mapLayerExists) {
-			// Update layer opacity
-			map.setPaintProperty(layerId, 'raster-opacity', layer.opacity);
-		}
-	},
-
-	addLayerToMap(layerId: string) {
-		const currentState = this.getCurrentState();
-		const map = currentState.map;
-		const layer = currentState.layers.get(layerId);
-		if (!map || !layer) return;
-
-		// Add source if it doesn't exist
-		if (!map.getSource(layerId)) {
-			// Handle different tile URL formats
-			let tileUrls: string[];
-
-			if (layerId.startsWith('carto-')) {
-				// CartoDB layers use direct tile URLs
-				tileUrls = [
-					layer.url.replace('a.basemaps', 'a.basemaps'),
-					layer.url.replace('a.basemaps', 'b.basemaps'),
-					layer.url.replace('a.basemaps', 'c.basemaps'),
-					layer.url.replace('a.basemaps', 'd.basemaps')
-				];
-			} else {
-				// LIST service layers use tile endpoint
-				tileUrls = [`${layer.url}/tile/{z}/{y}/{x}`];
-			}
-
-			map.addSource(layerId, {
-				type: 'raster',
-				tiles: tileUrls,
-				tileSize: 256,
-				attribution: layerId.startsWith('carto-')
-					? '© <a href="https://carto.com/attributions">CARTO</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-					: undefined
-			});
-		}
-
-		// Add layer if it doesn't exist
-		if (!map.getLayer(layerId)) {
-			// Find the first feature layer to insert basemap layers before it
-			// Feature layers have IDs that contain underscores (service_layerId format)
-			const mapLayers = map.getStyle().layers;
-			const firstFeatureLayerId = mapLayers.find((l) => l.id.includes('_'))?.id;
-
-			map.addLayer(
-				{
-					id: layerId,
-					type: 'raster',
-					source: layerId,
-					paint: {
-						'raster-opacity': layer.opacity
-					}
-				},
-				firstFeatureLayerId
-			); // Insert before first feature layer, or at top if none
-		}
+		// For backwards compatibility - basemaps opacity is handled by the style
+		console.warn('setLayerOpacity is deprecated for basemaps');
 	},
 
 	// Helper to get current state synchronously
@@ -849,10 +718,22 @@ export const mapStore = {
 		}
 	},
 
+	// Basemap management
+	setBasemap(basemapId: BasemapId) {
+		mapState.update((state) => ({
+			...state,
+			activeBasemap: basemapId
+		}));
+		
+		// Save to localStorage
+		setTimeout(() => this.saveState(), 0);
+	},
+
 	// State persistence
 	saveState() {
 		const currentState = this.getCurrentState();
 		const persistedState: PersistedMapState = {
+			activeBasemap: currentState.activeBasemap,
 			activeLayerIds: Array.from(currentState.activeLayerIds),
 			activeDynamicLayerIds: Array.from(currentState.activeDynamicLayerIds),
 			dynamicLayerOrder: currentState.dynamicLayerOrder,

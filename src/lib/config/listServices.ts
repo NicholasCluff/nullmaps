@@ -33,45 +33,52 @@ export const TASMANIA_BOUNDS = {
 	] as [[number, number], [number, number]]
 };
 
-// Base map services
+// Base map services - now using MapLibre GL style URLs for declarative handling
+export const BASEMAP_STYLES = {
+	'carto-light': {
+		id: 'carto-light',
+		name: 'CartoDB Light',
+		url: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+		description: 'Clean, minimalist light theme'
+	},
+	'carto-dark': {
+		id: 'carto-dark',
+		name: 'CartoDB Dark',
+		url: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+		description: 'Dark theme for low-light viewing'
+	},
+	'carto-voyager': {
+		id: 'carto-voyager',
+		name: 'CartoDB Voyager',
+		url: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+		description: 'Balanced theme with subtle colors'
+	},
+	'carto-positron': {
+		id: 'carto-positron',
+		name: 'CartoDB Positron',
+		url: 'https://basemaps.cartocdn.com/gl/positron-nolabels-gl-style/style.json',
+		description: 'Light theme without labels'
+	}
+} as const;
+
+export type BasemapId = keyof typeof BASEMAP_STYLES;
+
+// Default basemap
+export const DEFAULT_BASEMAP: BasemapId = 'carto-light';
+
+// Legacy service group for backwards compatibility (can be removed later)
 export const BASEMAP_SERVICES: ServiceGroup = {
 	id: 'basemaps',
 	name: 'Base Maps',
 	description: 'Background map layers with global coverage',
-	layers: [
-		{
-			id: 'carto-light',
-			name: 'CartoDB Light',
-			url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-			type: 'raster',
-			visible: true,
-			opacity: 1.0
-		},
-		{
-			id: 'carto-dark',
-			name: 'CartoDB Dark',
-			url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-			type: 'raster',
-			visible: false,
-			opacity: 1.0
-		},
-		{
-			id: 'carto-voyager',
-			name: 'CartoDB Voyager',
-			url: 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-			type: 'raster',
-			visible: false,
-			opacity: 1.0
-		},
-		{
-			id: 'carto-positron',
-			name: 'CartoDB Positron',
-			url: 'https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png',
-			type: 'raster',
-			visible: false,
-			opacity: 1.0
-		}
-	]
+	layers: Object.values(BASEMAP_STYLES).map((style, index) => ({
+		id: style.id,
+		name: style.name,
+		url: style.url,
+		type: 'raster' as const,
+		visible: index === 0, // Only first one visible by default
+		opacity: 1.0
+	}))
 };
 
 // All service groups (only basemaps - LIST layers are handled dynamically)
