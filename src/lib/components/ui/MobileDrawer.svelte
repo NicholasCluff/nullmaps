@@ -57,7 +57,7 @@
 
 			<!-- Drawer footer -->
 			<div class="drawer-footer">
-				<div class="footer-links">
+				<!-- <div class="footer-links">
 					<a href="https://www.thelist.tas.gov.au" target="_blank" rel="noopener noreferrer">
 						About LIST
 					</a>
@@ -68,7 +68,7 @@
 					>
 						GitHub
 					</a>
-				</div>
+				</div> -->
 				<div class="footer-attribution">
 					<p>© State of Tasmania</p>
 					<p>Department of Natural Resources and Environment Tasmania</p>

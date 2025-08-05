@@ -15,12 +15,14 @@
 		type SearchableLayer
 	} from '../../services/listService.js';
 
+	type TabType = 'basemaps' | 'list' | 'favorites';
+	
+	let activeTab: TabType = 'basemaps';
 	let expandedGroups = ['basemaps']; // Basemaps expanded by default
 	let searchQuery = '';
 	let allDynamicLayers: SearchableLayer[] = [];
 	let filteredLayers: SearchableLayer[] = [];
 	let groupedLayers: Map<string, SearchableLayer[]> = new Map();
-	let showDynamicLayers = false;
 	let loadingError: string | null = null;
 
 	// Load dynamic layers on mount
@@ -38,21 +40,21 @@
 		}
 	});
 
-	// Update filtered layers when search query or dynamic layer state changes
-	$: updateFilteredLayers(searchQuery, showDynamicLayers, allDynamicLayers);
+	// Update filtered layers when search query or tab changes
+	$: updateFilteredLayers(searchQuery, activeTab, allDynamicLayers);
 
 	function updateFilteredLayers(
 		query = searchQuery,
-		showDynamic = showDynamicLayers,
+		tab = activeTab,
 		layers = allDynamicLayers
 	) {
-		if (!showDynamic || layers.length === 0) {
+		if (tab !== 'list' && tab !== 'favorites') {
 			filteredLayers = [];
 			groupedLayers = new Map();
 			return;
 		}
 
-		if (query === 'favorites:') {
+		if (tab === 'favorites') {
 			// Show only favorite layers
 			filteredLayers = layers.filter((layer) => $favoriteLayerIds.has(layer.id));
 		} else {
@@ -60,6 +62,11 @@
 		}
 
 		groupedLayers = groupLayersByService(filteredLayers);
+	}
+
+	function switchTab(tab: TabType) {
+		activeTab = tab;
+		searchQuery = ''; // Clear search when switching tabs
 	}
 
 	function toggleGroup(groupId: string) {
@@ -92,13 +99,6 @@
 		return $activeDynamicLayerIds.has(layerId);
 	}
 
-	function toggleDynamicLayersView() {
-		showDynamicLayers = !showDynamicLayers;
-		if (showDynamicLayers) {
-			updateFilteredLayers();
-		}
-	}
-
 	function clearSearch() {
 		searchQuery = '';
 	}
@@ -106,34 +106,42 @@
 	// Calculate active layer counts
 	$: basemapActiveCount = $activeLayerIds.size;
 	$: dynamicActiveCount = $activeDynamicLayerIds.size;
+	$: favoritesCount = $favoriteLayerIds.size;
 </script>
 
 <div class="layer-panel">
 	<div class="panel-header">
 		<h3>Map Layers</h3>
-		<p class="panel-description">Toggle Tasmania LIST service layers</p>
-
-		<!-- Layer type toggle -->
-		<div class="layer-type-toggle">
+		
+		<!-- Three-tab navigation -->
+		<div class="tab-navigation">
 			<button
-				class="toggle-button"
-				class:active={!showDynamicLayers}
-				onclick={() => (showDynamicLayers = false)}
+				class="tab-button"
+				class:active={activeTab === 'basemaps'}
+				onclick={() => switchTab('basemaps')}
 			>
-				Base Layers ({basemapActiveCount})
+				Base ({basemapActiveCount})
 			</button>
 			<button
-				class="toggle-button"
-				class:active={showDynamicLayers}
-				onclick={toggleDynamicLayersView}
+				class="tab-button"
+				class:active={activeTab === 'list'}
+				onclick={() => switchTab('list')}
 			>
-				LIST Layers ({dynamicActiveCount})
+				LIST ({dynamicActiveCount})
+			</button>
+			<button
+				class="tab-button"
+				class:active={activeTab === 'favorites'}
+				onclick={() => switchTab('favorites')}
+				class:has-favorites={favoritesCount > 0}
+			>
+				★ {favoritesCount}
 			</button>
 		</div>
 	</div>
 
-	{#if showDynamicLayers}
-		<!-- Search interface for dynamic layers -->
+	<!-- Search interface for LIST layers -->
+	{#if activeTab === 'list'}
 		<div class="search-section">
 			<div class="search-input-container">
 				<svg
@@ -176,33 +184,35 @@
 					{filteredLayers.length} layers found
 				</div>
 			{/if}
-
-			<!-- Favorites filter -->
-			{#if $favoriteLayerIds.size > 0}
-				<div class="favorites-section">
-					<button
-						class="favorites-filter"
-						class:active={searchQuery === 'favorites:'}
-						onclick={() => (searchQuery = searchQuery === 'favorites:' ? '' : 'favorites:')}
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-						>
-							<polygon
-								points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
-							></polygon>
-						</svg>
-						Show Favorites ({$favoriteLayerIds.size})
-					</button>
-				</div>
-			{/if}
 		</div>
+	{/if}
 
+	<!-- Content based on active tab -->
+	{#if activeTab === 'basemaps'}
+		<!-- Basemap layers -->
+		<div class="layer-groups">
+			<div class="layer-group">
+				<div class="layer-list">
+					{#each SERVICE_GROUPS[0].layers as layer (layer.id)}
+						<div class="layer-item compact">
+							<div class="layer-control">
+								<label class="layer-toggle">
+									<input
+										type="radio"
+										name="basemap"
+										checked={isLayerActive(layer.id)}
+										onchange={() => handleLayerToggle(layer.id)}
+									/>
+									<span class="radio-custom"></span>
+									<span class="layer-name">{layer.name}</span>
+								</label>
+							</div>
+						</div>
+					{/each}
+				</div>
+			</div>
+		</div>
+	{:else if activeTab === 'list'}
 		<!-- Loading state for dynamic layers -->
 		{#if $layersLoading}
 			<div class="loading-section">
@@ -323,65 +333,54 @@
 				{/each}
 			</div>
 		{/if}
-	{:else}
-		<!-- Basemap layers -->
-		<div class="layer-groups">
-			<div class="layer-group">
-				<button
-					class="group-header"
-					class:expanded={expandedGroups.includes('basemaps')}
-					onclick={() => toggleGroup('basemaps')}
-					aria-expanded={expandedGroups.includes('basemaps')}
-				>
-					<div class="group-info">
-						<h4 class="group-name">Base Maps</h4>
-						<p class="group-description">Background map layers with global coverage</p>
-					</div>
-					<svg
-						class="expand-icon"
-						width="20"
-						height="20"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<polyline points="6,9 12,15 18,9"></polyline>
-					</svg>
-				</button>
-
-				{#if expandedGroups.includes('basemaps')}
-					<div class="layer-list">
-						{#each SERVICE_GROUPS[0].layers as layer (layer.id)}
-							<div class="layer-item">
-								<div class="layer-control">
-									<label class="layer-toggle">
-										<input
-											type="radio"
-											name="basemap"
-											checked={isLayerActive(layer.id)}
-											onchange={() => handleLayerToggle(layer.id)}
-										/>
-										<span class="radio-custom"></span>
-										<span class="layer-name">{layer.name}</span>
-									</label>
-
-									<div class="basemap-indicator">
-										<span class="basemap-badge">Basemap</span>
+	{:else if activeTab === 'favorites'}
+		<!-- Favorites tab -->
+		{#if favoritesCount === 0}
+			<div class="empty-favorites">
+				<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+					<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"></polygon>
+				</svg>
+				<p>No favorite layers</p>
+				<span>Star layers in the LIST tab to add them here</span>
+			</div>
+		{:else}
+			<!-- Favorite layers grouped by service -->
+			<div class="layer-groups">
+				{#each Array.from(groupedLayers.entries()) as [serviceName, serviceLayers] (serviceName)}
+					<div class="layer-group">
+						<div class="group-header-compact">
+							<h4 class="group-name compact">{serviceName.replace('Public/', '')}</h4>
+						</div>
+						<div class="layer-list">
+							{#each serviceLayers as layer (layer.id)}
+								<div class="layer-item compact">
+									<div class="layer-control">
+										<label class="layer-toggle">
+											<input
+												type="checkbox"
+												checked={isDynamicLayerActive(layer.id)}
+												onchange={() => handleDynamicLayerToggle(layer.id)}
+											/>
+											<span class="checkbox-custom"></span>
+											<span class="layer-name">{layer.name}</span>
+										</label>
+										<button
+											class="favorite-button favorited"
+											onclick={() => mapStore.toggleLayerFavorite(layer.id)}
+											aria-label="Remove from favorites"
+										>
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2">
+												<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"></polygon>
+											</svg>
+										</button>
 									</div>
 								</div>
-
-								{#if layer.description}
-									<div class="layer-description">
-										{layer.description}
-									</div>
-								{/if}
-							</div>
-						{/each}
+							{/each}
+						</div>
 					</div>
-				{/if}
+				{/each}
 			</div>
-		</div>
+		{/if}
 	{/if}
 
 	<div class="panel-footer">
@@ -426,31 +425,45 @@
 		margin: 0 0 16px 0;
 	}
 
-	.layer-type-toggle {
+	.tab-navigation {
 		display: flex;
-		gap: 4px;
+		gap: 2px;
 		background: #f3f4f6;
 		border-radius: 8px;
-		padding: 4px;
+		padding: 3px;
 	}
 
-	.toggle-button {
+	.tab-button {
 		flex: 1;
-		padding: 8px 12px;
+		padding: 6px 8px;
 		background: transparent;
 		border: none;
 		border-radius: 6px;
-		font-size: 13px;
+		font-size: 12px;
 		font-weight: 500;
 		color: #6b7280;
 		cursor: pointer;
 		transition: all 0.2s;
+		text-align: center;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	.toggle-button.active {
+	.tab-button.active {
 		background: white;
 		color: #1f2937;
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	}
+
+	.tab-button.has-favorites {
+		color: #f59e0b;
+	}
+
+	.tab-button.has-favorites.active {
+		background: #fef3c7;
+		color: #92400e;
 	}
 
 	.search-section {
@@ -624,6 +637,17 @@
 		margin: 0 0 2px 0;
 	}
 
+	.group-name.compact {
+		font-size: 14px;
+		margin: 0;
+	}
+
+	.group-header-compact {
+		padding: 8px 20px;
+		background: #f9fafb;
+		border-bottom: 1px solid #e5e7eb;
+	}
+
 	.group-description {
 		font-size: 13px;
 		color: #6b7280;
@@ -649,6 +673,10 @@
 	.layer-item {
 		padding: 12px 20px 12px 40px;
 		border-top: 1px solid #e5e7eb;
+	}
+
+	.layer-item.compact {
+		padding: 8px 20px 8px 20px;
 	}
 
 	.layer-control {
@@ -908,6 +936,79 @@
 
 	.layer-groups::-webkit-scrollbar-thumb:hover {
 		background: rgba(0, 0, 0, 0.3);
+	}
+
+	.empty-favorites {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 40px 20px;
+		text-align: center;
+		color: #9ca3af;
+	}
+
+	.empty-favorites svg {
+		margin-bottom: 16px;
+		opacity: 0.5;
+	}
+
+	.empty-favorites p {
+		margin: 0 0 8px 0;
+		font-size: 16px;
+		font-weight: 500;
+		color: #6b7280;
+	}
+
+	.empty-favorites span {
+		font-size: 14px;
+		line-height: 1.4;
+	}
+
+	/* Mobile optimizations */
+	@media (max-width: 768px) {
+		.panel-header {
+			padding: 16px;
+		}
+
+		.tab-navigation {
+			gap: 1px;
+			padding: 2px;
+		}
+
+		.tab-button {
+			padding: 4px 6px;
+			font-size: 11px;
+			min-height: 28px;
+		}
+
+		.search-section {
+			padding: 12px 16px;
+		}
+
+		.layer-item {
+			padding: 8px 16px 8px 24px;
+		}
+
+		.layer-item.compact {
+			padding: 6px 16px;
+		}
+
+		.layer-name {
+			font-size: 13px;
+		}
+
+		.group-header {
+			padding: 12px 16px;
+		}
+
+		.group-header-compact {
+			padding: 6px 16px;
+		}
+
+		.panel-footer {
+			padding: 16px;
+		}
 	}
 
 	@keyframes spin {

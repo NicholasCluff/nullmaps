@@ -186,11 +186,12 @@
 <style>
 	.drawer-toggle {
 		position: fixed;
-		bottom: 80px;
+		top: 80px;
 		right: 20px;
 		display: flex;
 		align-items: center;
 		gap: 8px;
+		max-height: 2rem;
 		padding: 12px 16px;
 		background: white;
 		border: 1px solid #e5e7eb;
