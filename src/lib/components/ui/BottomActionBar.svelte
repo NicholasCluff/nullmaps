@@ -3,7 +3,9 @@
 		mapStore,
 		activeLayerIds,
 		activeDynamicLayerIds,
-		bearing
+		bearing,
+		clickQueryResults,
+		clickQueryPanelVisible
 	} from '../../stores/mapStore.js';
 
 	export let onLayersToggle = () => {};
@@ -56,6 +58,10 @@
 				})
 				.catch(console.error);
 		}
+	}
+
+	function handleClickResultsToggle() {
+		mapStore.toggleClickQueryPanel();
 	}
 
 	// Calculate number of active layers (excluding basemap)
@@ -159,6 +165,31 @@
 				>
 			</svg>
 		</button>
+
+		<!-- Click Results toggle button -->
+		{#if $clickQueryResults.length > 0}
+			<button
+				class="action-button click-results-button"
+				class:panel-open={$clickQueryPanelVisible}
+				onclick={handleClickResultsToggle}
+				aria-label="Toggle click results panel"
+				title="Click query results"
+			>
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
+					<circle cx="11" cy="11" r="8"></circle>
+					<path d="m21 21-4.35-4.35"></path>
+					<circle cx="11" cy="11" r="3"></circle>
+				</svg>
+				<span class="results-count">{$clickQueryResults.length}</span>
+			</button>
+		{/if}
 
 		<!-- Layers toggle button -->
 		<button
@@ -294,6 +325,21 @@
 		color: #dc2626;
 	}
 
+	.click-results-button {
+		background: #f0fdf4;
+		color: #16a34a;
+	}
+
+	.click-results-button:hover {
+		background: #dcfce7;
+		color: #15803d;
+	}
+
+	.click-results-button.panel-open {
+		background: #bbf7d0;
+		color: #166534;
+	}
+
 	.layers-button.has-active {
 		background: #eff6ff;
 		color: #2563eb;
@@ -314,11 +360,11 @@
 		color: #b45309;
 	}
 
-	.layer-count {
+	.layer-count,
+	.results-count {
 		position: absolute;
 		top: -4px;
 		right: -4px;
-		background: #2563eb;
 		color: white;
 		font-size: 10px;
 		font-weight: 600;
@@ -329,6 +375,14 @@
 		align-items: center;
 		justify-content: center;
 		line-height: 1;
+	}
+
+	.layer-count {
+		background: #2563eb;
+	}
+
+	.results-count {
+		background: #16a34a;
 	}
 
 	.spinner {

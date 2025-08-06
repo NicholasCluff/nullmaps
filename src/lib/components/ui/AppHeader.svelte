@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { activeDynamicLayerIds, dynamicLayers, mapStore } from '../../stores/mapStore.js';
-	import { searchFeatures, createDebouncedSearch, type SearchResult } from '../../services/searchService.js';
+	import {
+		searchFeatures,
+		createDebouncedSearch,
+		type SearchResult
+	} from '../../services/searchService.js';
 	import SearchResults from '../search/SearchResults.svelte';
 
 	export let onMenuToggle = () => {};
@@ -43,8 +47,8 @@
 
 		// Get active layers to search
 		const activeLayersList = Array.from($activeDynamicLayerIds)
-			.map(id => $dynamicLayers.get(id))
-			.filter(layer => layer !== undefined);
+			.map((id) => $dynamicLayers.get(id))
+			.filter((layer) => layer !== undefined);
 
 		if (activeLayersList.length === 0) {
 			searchError = 'No active layers to search. Please enable some feature layers first.';
@@ -72,7 +76,7 @@
 			// Handle partial errors
 			if (response.errors.length > 0) {
 				console.warn('Some layers had search errors:', response.errors);
-				
+
 				// If we have results despite errors, show a warning
 				if (response.results.length > 0) {
 					const errorCount = response.errors.length;
@@ -82,7 +86,7 @@
 					// No results and errors - show error message
 					const errorMessages = response.errors
 						.slice(0, 3) // Show max 3 error messages
-						.map(err => err.error)
+						.map((err) => err.error)
 						.join(', ');
 					searchError = `Search errors: ${errorMessages}${response.errors.length > 3 ? '...' : ''}`;
 					return;
@@ -90,13 +94,14 @@
 			}
 
 			if (searchResults.length === 0) {
-				searchError = response.errors.length > 0 
-					? 'No results found. Some layers had errors.'
-					: 'No features found matching your search.';
+				searchError =
+					response.errors.length > 0
+						? 'No results found. Some layers had errors.'
+						: 'No features found matching your search.';
 			}
 		} catch (error) {
 			console.error('Search failed:', error);
-			
+
 			// Provide more specific error messages
 			if (error instanceof Error) {
 				if (error.message.includes('Network')) {
@@ -109,7 +114,7 @@
 			} else {
 				searchError = 'Search failed. Please try again.';
 			}
-			
+
 			searchResults = [];
 			isSearching = false;
 		}
@@ -215,7 +220,7 @@
 							<line x1="6" y1="6" x2="18" y2="18"></line>
 						</svg>
 					</button>
-					
+
 					{#if showResults}
 						<SearchResults
 							results={searchResults}

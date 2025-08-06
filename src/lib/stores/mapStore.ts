@@ -1,8 +1,16 @@
 import { writable, derived } from 'svelte/store';
 import type { Map as MapLibreMap } from 'maplibre-gl';
-import { TASMANIA_BOUNDS, SERVICE_GROUPS, BASEMAP_STYLES, DEFAULT_BASEMAP, type LayerConfig, type BasemapId } from '../config/listServices.js';
+import {
+	TASMANIA_BOUNDS,
+	SERVICE_GROUPS,
+	BASEMAP_STYLES,
+	DEFAULT_BASEMAP,
+	type LayerConfig,
+	type BasemapId
+} from '../config/listServices.js';
 import type { SearchableLayer } from '../services/listService.js';
 import type { SearchResult } from '../services/searchService.js';
+import type { ClickQueryResult } from '../services/clickQueryService.js';
 
 interface MapState {
 	map: MapLibreMap | null;
@@ -27,6 +35,11 @@ interface MapState {
 	searchResults: SearchResult[];
 	selectedSearchResult: SearchResult | null;
 	searchResultsVisible: boolean;
+	// Click query results state
+	clickQueryResults: ClickQueryResult[];
+	clickQueryLocation: { x: number; y: number } | null;
+	clickQueryTimestamp: number | null;
+	clickQueryPanelVisible: boolean;
 }
 
 interface PersistedMapState {
@@ -132,7 +145,12 @@ const mapState = writable<MapState>({
 	// Search state
 	searchResults: [],
 	selectedSearchResult: null,
-	searchResultsVisible: false
+	searchResultsVisible: false,
+	// Click query results state
+	clickQueryResults: [],
+	clickQueryLocation: null,
+	clickQueryTimestamp: null,
+	clickQueryPanelVisible: false
 });
 
 // Export the main state store
@@ -156,11 +174,16 @@ export const layersLoading = derived(mapState, ($state) => $state.layersLoading)
 export const searchResults = derived(mapState, ($state) => $state.searchResults);
 export const selectedSearchResult = derived(mapState, ($state) => $state.selectedSearchResult);
 export const searchResultsVisible = derived(mapState, ($state) => $state.searchResultsVisible);
+export const clickQueryResults = derived(mapState, ($state) => $state.clickQueryResults);
+export const clickQueryLocation = derived(mapState, ($state) => $state.clickQueryLocation);
+export const clickQueryTimestamp = derived(mapState, ($state) => $state.clickQueryTimestamp);
+export const clickQueryPanelVisible = derived(mapState, ($state) => $state.clickQueryPanelVisible);
 export const activeBasemap = derived(mapState, ($state) => $state.activeBasemap);
 
 // Derive the current basemap style URL
-export const currentBasemapStyle = derived(activeBasemap, ($activeBasemap) => 
-	BASEMAP_STYLES[$activeBasemap].url
+export const currentBasemapStyle = derived(
+	activeBasemap,
+	($activeBasemap) => BASEMAP_STYLES[$activeBasemap].url
 );
 
 // Map management functions
@@ -172,23 +195,26 @@ export const mapStore = {
 	setMap(map: MapLibreMap | null) {
 		mapState.update((state) => {
 			const newState = { ...state, map };
-			if (map) {
-				// Update state when map moves or rotates
+			if (map && !state.map) {
+				// Only add event listener if we don't already have a map
+				// Update state when map moves or rotates (debounced to prevent loops)
+				let moveTimeout: ReturnType<typeof setTimeout>;
 				map.on('move', () => {
-					const center = map.getCenter();
-					mapState.update((s) => {
-						const newState = {
-							...s,
-							center: [center.lng, center.lat] as [number, number],
-							zoom: map.getZoom(),
-							bearing: map.getBearing()
-						};
+					clearTimeout(moveTimeout);
+					moveTimeout = setTimeout(() => {
+						if (map.isStyleLoaded()) {
+							const center = map.getCenter();
+							mapState.update((s) => ({
+								...s,
+								center: [center.lng, center.lat] as [number, number],
+								zoom: map.getZoom(),
+								bearing: map.getBearing()
+							}));
 
-						// Save to localStorage
-						this.saveState();
-
-						return newState;
-					});
+							// Save to localStorage (debounced separately)
+							this.saveState();
+						}
+					}, 100);
 				});
 			}
 			return newState;
@@ -603,7 +629,7 @@ export const mapStore = {
 		// Add source for the search result
 		if (result.geometry.type === 'Point') {
 			const [lng, lat] = result.geometry.coordinates as [number, number];
-			
+
 			map.addSource(sourceId, {
 				type: 'geojson',
 				data: {
@@ -639,7 +665,7 @@ export const mapStore = {
 					const coordinates = (feature.geometry as any).coordinates.slice();
 					const name = feature.properties?.name || 'Search Result';
 					const layerName = feature.properties?.layerName || '';
-					
+
 					// Create a simple popup using native browser APIs for now
 					// This avoids import issues with MapLibre GL popup
 					const popupElement = document.createElement('div');
@@ -661,7 +687,7 @@ export const mapStore = {
 							${layerName ? `<br><small style="color: #666;">From: ${layerName}</small>` : ''}
 						</div>
 					`;
-					
+
 					// For now, just log the popup content - we'll improve this later
 					console.log('Search result clicked:', { name, layerName, coordinates });
 				}
@@ -699,21 +725,32 @@ export const mapStore = {
 	zoomToSearchResult(result: SearchResult) {
 		if (result.bbox) {
 			const [minX, minY, maxX, maxY] = result.bbox;
-			this.fitToBounds([[minX, minY], [maxX, maxY]]);
+			this.fitToBounds([
+				[minX, minY],
+				[maxX, maxY]
+			]);
 		} else if (result.geometry?.type === 'Point') {
 			const [lng, lat] = result.geometry.coordinates as [number, number];
-			
+
 			// Validate coordinates
 			if (isNaN(lng) || isNaN(lat) || !isFinite(lng) || !isFinite(lat)) {
-				console.error('Invalid search result coordinates:', { lng, lat, result: result.displayName });
+				console.error('Invalid search result coordinates:', {
+					lng,
+					lat,
+					result: result.displayName
+				});
 				return;
 			}
-			
+
 			// Check if coordinates are in reasonable range for Tasmania
 			if (lng < 140 || lng > 155 || lat < -45 || lat > -38) {
-				console.warn('Search result coordinates outside Tasmania bounds:', { lng, lat, result: result.displayName });
+				console.warn('Search result coordinates outside Tasmania bounds:', {
+					lng,
+					lat,
+					result: result.displayName
+				});
 			}
-			
+
 			this.flyTo([lng, lat], 16);
 		}
 	},
@@ -724,7 +761,7 @@ export const mapStore = {
 			...state,
 			activeBasemap: basemapId
 		}));
-		
+
 		// Save to localStorage
 		setTimeout(() => this.saveState(), 0);
 	},
@@ -743,5 +780,41 @@ export const mapStore = {
 			bearing: currentState.bearing
 		};
 		saveStateToStorage(persistedState);
+	},
+
+	// Click query results management
+	setClickQueryResults(results: ClickQueryResult[], location: { x: number; y: number }) {
+		mapState.update((state) => ({
+			...state,
+			clickQueryResults: results,
+			clickQueryLocation: location,
+			clickQueryTimestamp: Date.now(),
+			clickQueryPanelVisible: results.length > 0 // Auto-show panel if there are results
+		}));
+	},
+
+	toggleClickQueryPanel() {
+		mapState.update((state) => ({
+			...state,
+			clickQueryPanelVisible: !state.clickQueryPanelVisible
+		}));
+	},
+
+	clearClickQueryResults() {
+		mapState.update((state) => ({
+			...state,
+			clickQueryResults: [],
+			clickQueryLocation: null,
+			clickQueryTimestamp: null,
+			clickQueryPanelVisible: false
+		}));
+	},
+
+	// Clear all stored state (useful for debugging)
+	clearStoredState() {
+		if (typeof window !== 'undefined') {
+			localStorage.removeItem(STORAGE_KEY);
+			console.log('🗑️ Cleared stored map state from localStorage');
+		}
 	}
 };

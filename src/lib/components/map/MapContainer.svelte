@@ -9,51 +9,184 @@
 		activeDynamicLayerIds,
 		dynamicLayers,
 		currentBasemapStyle,
-		mapState
+		mapState,
+		clickQueryResults,
+		clickQueryPanelVisible
 	} from '../../stores/mapStore.js';
 	import { TASMANIA_BOUNDS } from '../../config/listServices.js';
+	import {
+		queryFeaturesAtLocation,
+		type ClickQueryResult
+	} from '../../services/clickQueryService.js';
+	import ClickQueryResults from './ClickQueryResults.svelte';
 	import 'maplibre-gl/dist/maplibre-gl.css';
 
-	let map: MapLibreMap | undefined;
+	let map: MapLibreMap | undefined = $state();
+	let mapInitialized = $state(false); // Flag to prevent multiple initializations
+
+	// Click query state (using modal for immediate results)
+	let showClickResults = $state(false);
+	let clickQueryLoading = $state(false);
+	let clickQueryError: string | null = $state(null);
+	let clickLocation: { x: number; y: number } | null = $state(null);
 
 	function handleMapLoad() {
-		if (!map) return;
+		if (!map || mapInitialized) return;
 
+		mapInitialized = true;
 		mapStore.setMap(map);
-		mapStore.setLoaded(true);
 
-		// Add click handler for feature info
-		map.on('click', handleMapClick);
+		// Wait for style to be fully loaded
+		if (map.isStyleLoaded()) {
+			completeMapInitialization();
+		} else {
+			map.once('styledata', completeMapInitialization);
+		}
 
 		// Add error handler
 		map.on('error', handleMapError);
 	}
 
-	// Watch for map changes and initialize when available
-	$: if (map && !$mapStore.isLoaded) {
-		handleMapLoad();
+	function completeMapInitialization() {
+		if (!map || $mapState.isLoaded) return;
+
+		mapStore.setLoaded(true);
+		mapStore.setLoading(false); // Ensure loading state is cleared
+
+		// Add click handler for feature info
+		map.on('click', handleMapClick);
+
+		console.log('Map successfully initialized');
 	}
 
-	function handleMapClick(event: { point: [number, number] }) {
-		if (!map) return;
-		const features = map.queryRenderedFeatures(event.point);
-		if (features.length > 0) {
-			// TODO: Implement feature info panel
-			console.log('Clicked features:', features);
+	// Watch for map changes and initialize when available
+	$effect(() => {
+		if (map && !mapInitialized && !$mapState.isLoaded) {
+			// Use setTimeout to break the reactive cycle and prevent infinite loops
+			setTimeout(() => {
+				handleMapLoad();
+			}, 0);
+		}
+	});
+
+	async function handleMapClick(event: {
+		lngLat: { lng: number; lat: number };
+		point: [number, number];
+	}) {
+		if (!map || clickQueryLoading) return;
+
+		const { lng, lat } = event.lngLat;
+
+		// Reset previous results
+		showClickResults = false;
+		clickQueryError = null;
+		clickLocation = { x: lng, y: lat };
+
+		// Get active layers to query
+		const activeLayers = Array.from($activeDynamicLayerIds)
+			.map((layerId) => $dynamicLayers.get(layerId))
+			.filter((layer) => layer !== undefined);
+
+		// Debug: Log click information
+		console.log(`🖱️ Map Click Debug:`, {
+			clickLocation: `${lng}, ${lat}`,
+			activeLayerIds: Array.from($activeDynamicLayerIds),
+			activeLayers: activeLayers.map((layer) => ({
+				id: layer.id,
+				name: layer.name,
+				serviceName: layer.serviceName,
+				serviceUrl: layer.serviceUrl
+			})),
+			totalDynamicLayers: $dynamicLayers.size
+		});
+
+		if (activeLayers.length === 0) {
+			clickQueryError = 'No active layers to query';
+			showClickResults = true;
+			return;
+		}
+
+		// Show loading state immediately
+		clickQueryLoading = true;
+		showClickResults = true;
+
+		try {
+			const response = await queryFeaturesAtLocation(activeLayers, {
+				geometry: { x: lng, y: lat },
+				tolerance: 5,
+				maxResults: 5,
+				returnGeometry: true
+			});
+
+			// Store results persistently in the map store
+			mapStore.setClickQueryResults(response.results, { x: lng, y: lat });
+
+			// Handle any errors from individual layers
+			if (response.errors.length > 0) {
+				const errorMessages = response.errors.map((e) => `${e.layerId}: ${e.error}`);
+				clickQueryError = `Some layers failed: ${errorMessages.join(', ')}`;
+			}
+
+			// If no results and no errors, show helpful message
+			if (response.results.length === 0 && response.errors.length === 0) {
+				clickQueryError = null; // Clear any previous errors - this isn't an error condition
+			}
+		} catch (error) {
+			console.error('Click query failed:', error);
+			clickQueryError = error instanceof Error ? error.message : 'Failed to query features';
+			// Clear results on error
+			mapStore.setClickQueryResults([], { x: lng, y: lat });
+		} finally {
+			clickQueryLoading = false;
 		}
 	}
 
 	function handleMapError(event: unknown) {
 		console.error('Map error:', event);
+
+		// Check if this is an AbortError - these are usually harmless
+		if (event && typeof event === 'object' && 'error' in event) {
+			const errorObj = event.error as any;
+			if (errorObj?.message?.includes('AbortError') || errorObj?.name === 'AbortError') {
+				// AbortError is usually caused by rapid source changes, not a critical error
+				console.warn('AbortError caught (usually harmless):', errorObj);
+				return; // Don't show error UI for abort errors
+			}
+
+			// For other errors, show the error
+			mapStore.setLoading(false);
+			const errorMessage = `Map loading failed: ${errorObj.message || 'Unknown error'}`;
+			mapStore.setError(errorMessage);
+		} else {
+			mapStore.setLoading(false);
+			mapStore.setError('Failed to load map');
+		}
+	}
+
+	function handleCloseResults() {
+		showClickResults = false;
+		clickQueryError = null;
+		clickLocation = null;
 	}
 
 	onMount(() => {
 		mapStore.setLoading(true);
 
+		// Set a timeout to prevent infinite loading
+		const loadingTimeout = setTimeout(() => {
+			if ($isLoading && !$mapState.isLoaded) {
+				console.warn('Map loading timeout reached');
+				mapStore.setError('Map loading timed out. Please refresh the page.');
+			}
+		}, 10000); // 10 second timeout
+
 		return () => {
+			clearTimeout(loadingTimeout);
 			if (map) {
 				map.off('click', handleMapClick);
+				map.off('error', handleMapError);
 			}
+			mapInitialized = false; // Reset flag on cleanup
 		};
 	});
 </script>
@@ -115,6 +248,17 @@
 			{/each}
 		{/if}
 	</MapLibre>
+
+	<!-- Click query results modal -->
+	{#if showClickResults}
+		<ClickQueryResults
+			results={$clickQueryResults}
+			loading={clickQueryLoading}
+			error={clickQueryError}
+			{clickLocation}
+			onClose={handleCloseResults}
+		/>
+	{/if}
 </div>
 
 <style>

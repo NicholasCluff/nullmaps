@@ -21,7 +21,7 @@
 
 	function getResultIcon(result: SearchResult): string {
 		if (!result.geometry) return '📍';
-		
+
 		switch (result.geometry.type) {
 			case 'Point':
 				return '📍';
@@ -48,7 +48,14 @@
 		</div>
 	{:else if error}
 		<div class="error-state">
-			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<svg
+				width="20"
+				height="20"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+			>
 				<circle cx="12" cy="12" r="10"></circle>
 				<line x1="15" y1="9" x2="9" y2="15"></line>
 				<line x1="9" y1="9" x2="15" y2="15"></line>
@@ -57,19 +64,28 @@
 		</div>
 	{:else if results.length > 0}
 		<div class="results-header">
-			<span class="results-count">{results.length} result{results.length === 1 ? '' : 's'} for "{query}"</span>
+			<span class="results-count"
+				>{results.length} result{results.length === 1 ? '' : 's'} for "{query}"</span
+			>
 			<button class="clear-button" onclick={onClear} aria-label="Clear search">
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+				>
 					<line x1="18" y1="6" x2="6" y2="18"></line>
 					<line x1="6" y1="6" x2="18" y2="18"></line>
 				</svg>
 			</button>
 		</div>
-		
+
 		<div class="results-list">
 			{#each results as result (result.id)}
-				<button 
-					class="result-item" 
+				<button
+					class="result-item"
 					onclick={() => handleResultClick(result)}
 					title="Click to zoom to this feature"
 				>
@@ -91,7 +107,14 @@
 						</div>
 					</div>
 					<div class="result-action">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<svg
+							width="16"
+							height="16"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
 							<path d="M15 3h6v6"></path>
 							<path d="M21 3l-7 7"></path>
 							<path d="M14 14v7H3v-7"></path>
@@ -102,7 +125,14 @@
 		</div>
 	{:else if query.trim()}
 		<div class="empty-state">
-			<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+			<svg
+				width="48"
+				height="48"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.5"
+			>
 				<circle cx="11" cy="11" r="8"></circle>
 				<path d="m21 21-4.35-4.35"></path>
 			</svg>
@@ -124,7 +154,9 @@
 		border: 1px solid #e5e7eb;
 		border-top: none;
 		border-radius: 0 0 12px 12px;
-		box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+		box-shadow:
+			0 10px 25px -5px rgba(0, 0, 0, 0.1),
+			0 10px 10px -5px rgba(0, 0, 0, 0.04);
 		max-height: 400px;
 		overflow: hidden;
 		z-index: 1000;

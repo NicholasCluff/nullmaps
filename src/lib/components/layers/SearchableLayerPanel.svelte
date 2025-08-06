@@ -16,7 +16,7 @@
 	} from '../../services/listService.js';
 
 	type TabType = 'basemaps' | 'list' | 'favorites';
-	
+
 	let activeTab: TabType = 'basemaps';
 	let expandedGroups = ['basemaps']; // Basemaps expanded by default
 	let searchQuery = '';
@@ -27,6 +27,11 @@
 
 	// Load dynamic layers on mount
 	onMount(async () => {
+		// Prevent multiple calls if already loading or loaded
+		if ($layersLoading || allDynamicLayers.length > 0) {
+			return;
+		}
+
 		try {
 			mapStore.setLayersLoading(true);
 			allDynamicLayers = await loadAllLayers();
@@ -40,13 +45,14 @@
 		}
 	});
 
-	// Update filtered layers when search query or tab changes
-	$: updateFilteredLayers(searchQuery, activeTab, allDynamicLayers);
+	// Update filtered layers when search query, tab, or favorites change
+	$: updateFilteredLayers(searchQuery, activeTab, allDynamicLayers, $favoriteLayerIds);
 
 	function updateFilteredLayers(
 		query = searchQuery,
 		tab = activeTab,
-		layers = allDynamicLayers
+		layers = allDynamicLayers,
+		favorites = $favoriteLayerIds
 	) {
 		if (tab !== 'list' && tab !== 'favorites') {
 			filteredLayers = [];
@@ -56,7 +62,7 @@
 
 		if (tab === 'favorites') {
 			// Show only favorite layers
-			filteredLayers = layers.filter((layer) => $favoriteLayerIds.has(layer.id));
+			filteredLayers = layers.filter((layer) => favorites.has(layer.id));
 		} else {
 			filteredLayers = searchLayers(layers, query);
 		}
@@ -112,7 +118,7 @@
 <div class="layer-panel">
 	<div class="panel-header">
 		<h3>Map Layers</h3>
-		
+
 		<!-- Three-tab navigation -->
 		<div class="tab-navigation">
 			<button
@@ -342,8 +348,17 @@
 		<!-- Favorites tab -->
 		{#if favoritesCount === 0}
 			<div class="empty-favorites">
-				<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-					<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"></polygon>
+				<svg
+					width="48"
+					height="48"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+				>
+					<polygon
+						points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+					></polygon>
 				</svg>
 				<p>No favorite layers</p>
 				<span>Star layers in the LIST tab to add them here</span>
@@ -374,8 +389,17 @@
 											onclick={() => mapStore.toggleLayerFavorite(layer.id)}
 											aria-label="Remove from favorites"
 										>
-											<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2">
-												<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"></polygon>
+											<svg
+												width="14"
+												height="14"
+												viewBox="0 0 24 24"
+												fill="currentColor"
+												stroke="currentColor"
+												stroke-width="2"
+											>
+												<polygon
+													points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+												></polygon>
 											</svg>
 										</button>
 									</div>

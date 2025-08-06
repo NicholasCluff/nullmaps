@@ -96,15 +96,15 @@ export async function searchFeatures(
 		results.sort((a, b) => {
 			const aName = (a.displayName || '').toLowerCase();
 			const bName = (b.displayName || '').toLowerCase();
-			
+
 			// Exact matches first
 			if (aName === searchTerm && bName !== searchTerm) return -1;
 			if (bName === searchTerm && aName !== searchTerm) return 1;
-			
+
 			// Then starts with matches
 			if (aName.startsWith(searchTerm) && !bName.startsWith(searchTerm)) return -1;
 			if (bName.startsWith(searchTerm) && !aName.startsWith(searchTerm)) return 1;
-			
+
 			// Finally alphabetical
 			return aName.localeCompare(bName);
 		});
@@ -193,12 +193,12 @@ async function searchLayerFeatures(
 		};
 	} catch (error) {
 		console.warn(`Failed to search layer ${layer.name}:`, error);
-		
+
 		// Re-throw with more specific error messages
 		if (error instanceof TypeError && error.message.includes('fetch')) {
 			throw new Error(`Network error when searching "${layer.name}"`);
 		}
-		
+
 		throw error;
 	}
 }
@@ -206,7 +206,7 @@ async function searchLayerFeatures(
 /**
  * Process a raw ArcGIS feature into a SearchResult
  */
-function processFeatureResult(
+export function processFeatureResult(
 	feature: any,
 	layer: SearchableLayer,
 	index: number
@@ -246,12 +246,24 @@ function processFeatureResult(
 function findDisplayName(attributes: Record<string, any>): string {
 	// Common field names that make good display names
 	const nameFields = [
-		'NAME', 'Name', 'name',
-		'LABEL', 'Label', 'label',
-		'TITLE', 'Title', 'title',
-		'ID', 'Id', 'id',
-		'CODE', 'Code', 'code',
-		'PACK_ID', 'PackId', 'pack_id'
+		'NAME',
+		'Name',
+		'name',
+		'LABEL',
+		'Label',
+		'label',
+		'TITLE',
+		'Title',
+		'title',
+		'ID',
+		'Id',
+		'id',
+		'CODE',
+		'Code',
+		'code',
+		'PACK_ID',
+		'PackId',
+		'pack_id'
 	];
 
 	for (const field of nameFields) {
@@ -273,17 +285,32 @@ function findDisplayName(attributes: Record<string, any>): string {
 /**
  * Find a secondary display value
  */
-function findDisplayValue(attributes: Record<string, any>, displayName?: string): string | undefined {
+function findDisplayValue(
+	attributes: Record<string, any>,
+	displayName?: string
+): string | undefined {
 	// Common secondary fields
 	const valueFields = [
-		'DESCRIPTION', 'Description', 'description',
-		'TYPE', 'Type', 'type',
-		'CATEGORY', 'Category', 'category',
-		'STATUS', 'Status', 'status'
+		'DESCRIPTION',
+		'Description',
+		'description',
+		'TYPE',
+		'Type',
+		'type',
+		'CATEGORY',
+		'Category',
+		'category',
+		'STATUS',
+		'Status',
+		'status'
 	];
 
 	for (const field of valueFields) {
-		if (attributes[field] && typeof attributes[field] === 'string' && attributes[field] !== displayName) {
+		if (
+			attributes[field] &&
+			typeof attributes[field] === 'string' &&
+			attributes[field] !== displayName
+		) {
 			return attributes[field];
 		}
 	}
@@ -300,16 +327,16 @@ function processGeometry(geometry: any): SearchResult['geometry'] {
 	if (geometry.x !== undefined && geometry.y !== undefined) {
 		// Point geometry - ArcGIS returns x,y
 		let coordinates = [geometry.x, geometry.y];
-		
+
 		// Check if coordinates might be in Web Mercator (large numbers) and need transformation
 		if (Math.abs(geometry.x) > 180 || Math.abs(geometry.y) > 90) {
 			// Transform from Web Mercator to WGS84
 			// This is a simplified transformation - proper transformation would use proj4js
-			const lng = geometry.x / 20037508.34 * 180;
-			const lat = Math.atan(Math.exp(geometry.y / 20037508.34 * Math.PI)) * 360 / Math.PI - 90;
+			const lng = (geometry.x / 20037508.34) * 180;
+			const lat = (Math.atan(Math.exp((geometry.y / 20037508.34) * Math.PI)) * 360) / Math.PI - 90;
 			coordinates = [lng, lat];
 		}
-		
+
 		return {
 			type: 'Point',
 			coordinates: coordinates,
@@ -347,14 +374,14 @@ function calculateBoundingBox(geometry: any): [number, number, number, number] |
 	if (geometry.x !== undefined && geometry.y !== undefined) {
 		let x = geometry.x;
 		let y = geometry.y;
-		
+
 		// Check if coordinates need transformation from Web Mercator to WGS84
 		if (Math.abs(x) > 180 || Math.abs(y) > 90) {
 			// Convert from Web Mercator to WGS84
-			x = x / 20037508.34 * 180;
-			y = Math.atan(Math.exp(y / 20037508.34 * Math.PI)) * 360 / Math.PI - 90;
+			x = (x / 20037508.34) * 180;
+			y = (Math.atan(Math.exp((y / 20037508.34) * Math.PI)) * 360) / Math.PI - 90;
 		}
-		
+
 		// Point - create small bbox around point in degrees
 		const buffer = 0.001; // approximately 100 meters in degrees at Tasmania's latitude
 		return [x - buffer, y - buffer, x + buffer, y + buffer];
@@ -362,7 +389,10 @@ function calculateBoundingBox(geometry: any): [number, number, number, number] |
 
 	if (geometry.paths) {
 		// Polyline
-		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		let minX = Infinity,
+			minY = Infinity,
+			maxX = -Infinity,
+			maxY = -Infinity;
 		geometry.paths.forEach((path: number[][]) => {
 			path.forEach(([x, y]) => {
 				minX = Math.min(minX, x);
@@ -376,7 +406,10 @@ function calculateBoundingBox(geometry: any): [number, number, number, number] |
 
 	if (geometry.rings) {
 		// Polygon
-		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		let minX = Infinity,
+			minY = Infinity,
+			maxX = -Infinity,
+			maxY = -Infinity;
 		geometry.rings.forEach((ring: number[][]) => {
 			ring.forEach(([x, y]) => {
 				minX = Math.min(minX, x);
