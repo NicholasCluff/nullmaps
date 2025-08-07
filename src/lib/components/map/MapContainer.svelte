@@ -14,10 +14,7 @@
 		clickQueryPanelVisible
 	} from '../../stores/mapStore.js';
 	import { TASMANIA_BOUNDS } from '../../config/listServices.js';
-	import {
-		queryFeaturesAtLocation,
-		type ClickQueryResult
-	} from '../../services/clickQueryService.js';
+	import { queryFeaturesAtLocation } from '../../services/clickQueryService.js';
 	import ClickQueryResults from './ClickQueryResults.svelte';
 	import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -25,7 +22,6 @@
 	let mapInitialized = $state(false); // Flag to prevent multiple initializations
 
 	// Click query state (using modal for immediate results)
-	let showClickResults = $state(false);
 	let clickQueryLoading = $state(false);
 	let clickQueryError: string | null = $state(null);
 	let clickLocation: { x: number; y: number } | null = $state(null);
@@ -78,7 +74,6 @@
 		const { lng, lat } = event.lngLat;
 
 		// Reset previous results
-		showClickResults = false;
 		clickQueryError = null;
 		clickLocation = { x: lng, y: lat };
 
@@ -102,13 +97,13 @@
 
 		if (activeLayers.length === 0) {
 			clickQueryError = 'No active layers to query';
-			showClickResults = true;
+			// Auto-show panel when there are results or errors
+			mapStore.setClickQueryResults([], { x: lng, y: lat });
 			return;
 		}
 
 		// Show loading state immediately
 		clickQueryLoading = true;
-		showClickResults = true;
 
 		try {
 			const response = await queryFeaturesAtLocation(activeLayers, {
@@ -164,7 +159,7 @@
 	}
 
 	function handleCloseResults() {
-		showClickResults = false;
+		mapStore.toggleClickQueryPanel(); // Close the panel
 		clickQueryError = null;
 		clickLocation = null;
 	}
@@ -250,7 +245,7 @@
 	</MapLibre>
 
 	<!-- Click query results modal -->
-	{#if showClickResults}
+	{#if $clickQueryPanelVisible}
 		<ClickQueryResults
 			results={$clickQueryResults}
 			loading={clickQueryLoading}

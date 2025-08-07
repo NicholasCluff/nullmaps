@@ -5,7 +5,6 @@
 	import BottomActionBar from '$lib/components/ui/BottomActionBar.svelte';
 	import SearchableLayerPanel from '$lib/components/layers/SearchableLayerPanel.svelte';
 	import LayersDrawer from '$lib/components/layers/LayersDrawer.svelte';
-	import ClickQueryPanel from '$lib/components/map/ClickQueryPanel.svelte';
 
 	let isDrawerOpen = false;
 
@@ -44,8 +43,6 @@
 </main>
 
 <LayersDrawer />
-
-<ClickQueryPanel />
 
 <BottomActionBar onLayersToggle={handleLayersToggle} onShareMap={handleShareMap} />
 

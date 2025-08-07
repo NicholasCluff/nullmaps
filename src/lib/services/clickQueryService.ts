@@ -351,7 +351,7 @@ function formatAttributes(attributes: Record<string, any>): Array<{ key: string;
 			key: formatFieldName(key),
 			value: String(value)
 		}))
-		.slice(0, 10); // Limit to first 10 attributes for mobile display
+; // Show all relevant attributes
 }
 
 /**
