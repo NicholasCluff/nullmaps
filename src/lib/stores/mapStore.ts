@@ -30,6 +30,7 @@ interface MapState {
 	activeDynamicLayerIds: Set<string>;
 	dynamicLayerOrder: string[]; // Track layer rendering order (bottom to top)
 	dynamicLayerOpacities: Map<string, number>; // Track opacity for each layer
+	dynamicLayerVisibilities: Map<string, boolean>; // Track visibility for each layer
 	favoriteLayerIds: Set<string>;
 	layersLoading: boolean;
 	// Searchable field selections per layer
@@ -51,6 +52,7 @@ interface PersistedMapState {
 	activeDynamicLayerIds: string[];
 	dynamicLayerOrder: string[];
 	dynamicLayerOpacities: Array<[string, number]>; // Persist layer opacities as array of [layerId, opacity]
+	dynamicLayerVisibilities: Array<[string, boolean]>; // Persist layer visibilities as array of [layerId, visible]
 	favoriteLayerIds: string[];
 	layerSearchableFields: Array<[string, string[]]>; // Persist searchable fields as array of [layerId, fieldNames]
 	center: [number, number];
@@ -146,6 +148,7 @@ const mapState = writable<MapState>({
 	activeDynamicLayerIds: new Set(savedState?.activeDynamicLayerIds || []),
 	dynamicLayerOrder: savedState?.dynamicLayerOrder || [],
 	dynamicLayerOpacities: new Map(savedState?.dynamicLayerOpacities || []),
+	dynamicLayerVisibilities: new Map(savedState?.dynamicLayerVisibilities || []),
 	favoriteLayerIds: initialFavoriteLayerIds,
 	layersLoading: false,
 	// Searchable field selections per layer
@@ -180,6 +183,7 @@ export const dynamicLayers = derived(mapState, ($state) => $state.dynamicLayers)
 export const activeDynamicLayerIds = derived(mapState, ($state) => $state.activeDynamicLayerIds);
 export const dynamicLayerOrder = derived(mapState, ($state) => $state.dynamicLayerOrder);
 export const dynamicLayerOpacities = derived(mapState, ($state) => $state.dynamicLayerOpacities);
+export const dynamicLayerVisibilities = derived(mapState, ($state) => $state.dynamicLayerVisibilities);
 export const favoriteLayerIds = derived(mapState, ($state) => $state.favoriteLayerIds);
 export const layersLoading = derived(mapState, ($state) => $state.layersLoading);
 export const searchResults = derived(mapState, ($state) => $state.searchResults);
@@ -392,17 +396,22 @@ export const mapStore = {
 				}
 			}
 
-			// Initialize opacity if not already set
+			// Initialize opacity and visibility if not already set
 			const newOpacities = new Map(state.dynamicLayerOpacities);
+			const newVisibilities = new Map(state.dynamicLayerVisibilities);
 			if (!newOpacities.has(layerId)) {
 				newOpacities.set(layerId, 0.8); // Default opacity
+			}
+			if (!newVisibilities.has(layerId)) {
+				newVisibilities.set(layerId, true); // Default visible
 			}
 
 			const newState = {
 				...state,
 				activeDynamicLayerIds: newActiveDynamicLayerIds,
 				dynamicLayerOrder: newDynamicLayerOrder,
-				dynamicLayerOpacities: newOpacities
+				dynamicLayerOpacities: newOpacities,
+				dynamicLayerVisibilities: newVisibilities
 			};
 
 			// Update map if available
@@ -488,8 +497,9 @@ export const mapStore = {
 
 		// Add layer if it doesn't exist
 		if (!map.getLayer(layerId)) {
-			// Get stored opacity or use default
+			// Get stored opacity and visibility or use defaults
 			const storedOpacity = currentState.dynamicLayerOpacities.get(layerId) || 0.8;
+			const isVisible = currentState.dynamicLayerVisibilities.get(layerId) !== false;
 
 			// Find proper insertion point for consistent layer positioning
 			const insertionPoint = this.findDynamicLayerInsertionPoint(map);
@@ -503,6 +513,9 @@ export const mapStore = {
 					source: sourceId,
 					paint: {
 						'raster-opacity': storedOpacity
+					},
+					layout: {
+						'visibility': isVisible ? 'visible' : 'none'
 					}
 				},
 				insertionPoint
@@ -530,6 +543,28 @@ export const mapStore = {
 		if (map && map.getLayer(layerId)) {
 			// All layers are now raster layers (WMS renders vector data as images)
 			map.setPaintProperty(layerId, 'raster-opacity', clampedOpacity);
+		}
+
+		// Save to localStorage
+		setTimeout(() => this.saveState(), 0);
+	},
+
+	setDynamicLayerVisibility(layerId: string, visible: boolean) {
+		// Update state first
+		mapState.update((state) => {
+			const newVisibilities = new Map(state.dynamicLayerVisibilities);
+			newVisibilities.set(layerId, visible);
+			return {
+				...state,
+				dynamicLayerVisibilities: newVisibilities
+			};
+		});
+
+		// Update map layer if it exists
+		const currentState = this.getCurrentState();
+		const map = currentState.map;
+		if (map && map.getLayer(layerId)) {
+			map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
 		}
 
 		// Save to localStorage
@@ -650,8 +685,9 @@ export const mapStore = {
 
 					// Add layer with proper insertion point
 					if (!map.getLayer(layerId)) {
-						// Get stored opacity or use default
+						// Get stored opacity and visibility or use defaults
 						const storedOpacity = state.dynamicLayerOpacities.get(layerId) || 0.8;
+						const isVisible = state.dynamicLayerVisibilities.get(layerId) !== false;
 
 						map.addLayer(
 							{
@@ -660,6 +696,9 @@ export const mapStore = {
 								source: sourceId,
 								paint: {
 									'raster-opacity': storedOpacity
+								},
+								layout: {
+									'visibility': isVisible ? 'visible' : 'none'
 								}
 							},
 							insertionPoint // Use consistent insertion point for all layers
@@ -711,6 +750,9 @@ export const mapStore = {
 			searchResults: results,
 			searchResultsVisible: results.length > 0
 		}));
+		
+		// Add all search results with geometry to the map
+		this.addSearchResultsToMap(results);
 	},
 
 	selectSearchResult(result: SearchResult | null) {
@@ -742,6 +784,371 @@ export const mapStore = {
 			searchResultsVisible: false
 		}));
 		this.clearSearchResultsFromMap();
+	},
+
+	// Add multiple search results to the map with enhanced geometry support
+	addSearchResultsToMap(results: SearchResult[]) {
+		const currentState = this.getCurrentState();
+		const map = currentState.map;
+		if (!map) return;
+
+		// Remove existing search result layers
+		this.clearSearchResultsFromMap();
+
+		// Filter results that have geometry
+		const resultsWithGeometry = results.filter(result => result.geometry);
+		if (resultsWithGeometry.length === 0) return;
+
+		// Create GeoJSON feature collection
+		const features = resultsWithGeometry.map((result, index) => {
+			const geometry = this.convertToGeoJSONGeometry(result.geometry!);
+			return {
+				type: 'Feature' as const,
+				id: `search-result-${index}`,
+				geometry,
+				properties: {
+					resultId: result.id,
+					name: result.displayName || 'Search Result',
+					layerName: result.layerName,
+					serviceName: result.serviceName,
+					matchedField: result.matchedField,
+					matchedValue: result.matchedValue,
+					attributes: result.attributes,
+					geometryType: result.geometry!.type
+				}
+			};
+		});
+
+		const featureCollection = {
+			type: 'FeatureCollection' as const,
+			features
+		};
+
+		// Add sources and layers for different geometry types
+		this.addSearchResultLayers(map, featureCollection);
+	},
+
+	// Convert SearchResult geometry to GeoJSON geometry
+	convertToGeoJSONGeometry(geometry: SearchResult['geometry']): any {
+		if (!geometry) return null;
+
+		switch (geometry.type) {
+			case 'Point':
+				return {
+					type: 'Point',
+					coordinates: geometry.coordinates
+				};
+			case 'Polyline':
+				return {
+					type: 'MultiLineString',
+					coordinates: geometry.coordinates
+				};
+			case 'Polygon':
+				return {
+					type: 'Polygon',
+					coordinates: geometry.coordinates
+				};
+			default:
+				return null;
+		}
+	},
+
+	// Add search result layers to the map for different geometry types
+	addSearchResultLayers(map: any, featureCollection: any) {
+		const sourceId = 'search-results-source';
+
+		// Add the main source
+		map.addSource(sourceId, {
+			type: 'geojson',
+			data: featureCollection
+		});
+
+		// Add layers for different geometry types
+		// Points - show as circle markers
+		map.addLayer({
+			id: 'search-results-points',
+			type: 'circle',
+			source: sourceId,
+			filter: ['==', ['get', 'geometryType'], 'Point'],
+			paint: {
+				'circle-radius': [
+					'case',
+					['boolean', ['feature-state', 'hover'], false],
+					12,
+					8
+				],
+				'circle-color': '#ef4444',
+				'circle-stroke-color': '#ffffff',
+				'circle-stroke-width': 2,
+				'circle-opacity': 0.8
+			}
+		});
+
+		// Points - labels
+		map.addLayer({
+			id: 'search-results-labels',
+			type: 'symbol',
+			source: sourceId,
+			filter: ['==', ['get', 'geometryType'], 'Point'],
+			layout: {
+				'text-field': ['get', 'name'],
+				'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+				'text-size': 12,
+				'text-offset': [0, -2],
+				'text-anchor': 'bottom'
+			},
+			paint: {
+				'text-color': '#1f2937',
+				'text-halo-color': '#ffffff',
+				'text-halo-width': 1
+			}
+		});
+
+		// Lines - show as highlighted lines
+		map.addLayer({
+			id: 'search-results-lines',
+			type: 'line',
+			source: sourceId,
+			filter: ['==', ['get', 'geometryType'], 'Polyline'],
+			paint: {
+				'line-color': '#ef4444',
+				'line-width': [
+					'case',
+					['boolean', ['feature-state', 'hover'], false],
+					6,
+					4
+				],
+				'line-opacity': 0.8
+			}
+		});
+
+		// Polygons - show as filled with outline
+		map.addLayer({
+			id: 'search-results-polygons',
+			type: 'fill',
+			source: sourceId,
+			filter: ['==', ['get', 'geometryType'], 'Polygon'],
+			paint: {
+				'fill-color': '#ef4444',
+				'fill-opacity': [
+					'case',
+					['boolean', ['feature-state', 'hover'], false],
+					0.4,
+					0.2
+				]
+			}
+		});
+
+		// Polygon outlines
+		map.addLayer({
+			id: 'search-results-polygon-outlines',
+			type: 'line',
+			source: sourceId,
+			filter: ['==', ['get', 'geometryType'], 'Polygon'],
+			paint: {
+				'line-color': '#dc2626',
+				'line-width': [
+					'case',
+					['boolean', ['feature-state', 'hover'], false],
+					3,
+					2
+				],
+				'line-opacity': 0.9
+			}
+		});
+
+		// Add interactivity
+		this.addSearchResultsInteractivity(map);
+	},
+
+	// Add hover and click interactions for search results
+	addSearchResultsInteractivity(map: any) {
+		const layerIds = [
+			'search-results-points',
+			'search-results-lines', 
+			'search-results-polygons',
+			'search-results-polygon-outlines'
+		];
+
+		layerIds.forEach(layerId => {
+			// Mouse enter - set hover state and cursor
+			map.on('mouseenter', layerId, (e: any) => {
+				if (e.features.length > 0) {
+					map.getCanvas().style.cursor = 'pointer';
+					map.setFeatureState(
+						{ source: 'search-results-source', id: e.features[0].id },
+						{ hover: true }
+					);
+				}
+			});
+
+			// Mouse leave - remove hover state and cursor
+			map.on('mouseleave', layerId, (e: any) => {
+				if (e.features.length > 0) {
+					map.getCanvas().style.cursor = '';
+					map.setFeatureState(
+						{ source: 'search-results-source', id: e.features[0].id },
+						{ hover: false }
+					);
+				}
+			});
+
+			// Click - show detailed popup
+			map.on('click', layerId, (e: any) => {
+				if (e.features && e.features[0]) {
+					this.showSearchResultPopup(map, e.features[0], e.lngLat);
+				}
+			});
+		});
+	},
+
+	// Show detailed popup for search result feature
+	showSearchResultPopup(map: any, feature: any, lngLat: any) {
+		const props = feature.properties;
+		
+		// Create popup content with enhanced details
+		const popupContent = this.createSearchResultPopupContent(props);
+		
+		// Create a simple popup using MapLibre's Popup
+		try {
+			// Import MapLibre Popup dynamically
+			import('maplibre-gl').then(({ Popup }) => {
+				const popup = new Popup({ 
+					closeButton: true,
+					closeOnClick: true,
+					maxWidth: '300px'
+				})
+					.setLngLat(lngLat)
+					.setHTML(popupContent)
+					.addTo(map);
+			}).catch(() => {
+				// Fallback to console logging if Popup is not available
+				console.log('Search result clicked:', {
+					name: props.name,
+					layerName: props.layerName,
+					matchedField: props.matchedField,
+					matchedValue: props.matchedValue,
+					coordinates: lngLat
+				});
+			});
+		} catch (error) {
+			// Fallback to console logging if dynamic import fails
+			console.log('Search result details:', {
+				name: props.name,
+				layerName: props.layerName,
+				matchedField: props.matchedField,
+				matchedValue: props.matchedValue,
+				coordinates: lngLat
+			});
+		}
+	},
+
+	// Create HTML content for search result popup
+	createSearchResultPopupContent(properties: any): string {
+		const {
+			name,
+			layerName,
+			serviceName,
+			matchedField,
+			matchedValue,
+			attributes
+		} = properties;
+
+		let content = `
+			<div style="
+				background: white;
+				padding: 12px;
+				border-radius: 6px;
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+				font-size: 14px;
+				line-height: 1.4;
+				max-width: 280px;
+			">
+				<div style="
+					font-weight: 600;
+					color: #1f2937;
+					margin-bottom: 8px;
+					font-size: 15px;
+				">${name || 'Search Result'}</div>
+		`;
+
+		// Add matched field information if available
+		if (matchedField && matchedValue && matchedValue !== name) {
+			content += `
+				<div style="
+					margin-bottom: 8px;
+					padding: 6px 8px;
+					background: #f0fdf4;
+					border-radius: 4px;
+					border-left: 3px solid #059669;
+				">
+					<div style="color: #059669; font-weight: 500; font-size: 13px;">
+						Matched: ${matchedValue}
+					</div>
+					<div style="color: #6b7280; font-size: 12px;">
+						Field: ${matchedField}
+					</div>
+				</div>
+			`;
+		}
+
+		// Add layer information
+		content += `
+			<div style="
+				display: flex;
+				gap: 6px;
+				flex-wrap: wrap;
+				margin-bottom: 8px;
+			">
+				<span style="
+					background: #eff6ff;
+					color: #2563eb;
+					padding: 2px 6px;
+					border-radius: 3px;
+					font-size: 11px;
+					font-weight: 500;
+				">${layerName}</span>
+				<span style="
+					background: #f3f4f6;
+					color: #6b7280;
+					padding: 2px 6px;
+					border-radius: 3px;
+					font-size: 11px;
+				">${serviceName}</span>
+			</div>
+		`;
+
+		// Add key attributes (limit to most relevant ones)
+		if (attributes && typeof attributes === 'object') {
+			const relevantFields = ['OBJECTID', 'ID', 'NAME', 'TYPE', 'STATUS', 'DESCRIPTION'].slice(0, 3);
+			const shownFields = relevantFields.filter(field => 
+				attributes[field] != null && attributes[field] !== name && attributes[field] !== matchedValue
+			);
+
+			if (shownFields.length > 0) {
+				content += `
+					<div style="
+						border-top: 1px solid #e5e7eb;
+						padding-top: 8px;
+						margin-top: 8px;
+					">
+				`;
+				
+				shownFields.forEach(field => {
+					content += `
+						<div style="margin-bottom: 4px; font-size: 12px;">
+							<span style="color: #6b7280;">${field}:</span>
+							<span style="color: #1f2937; margin-left: 4px;">${attributes[field]}</span>
+						</div>
+					`;
+				});
+				
+				content += '</div>';
+			}
+		}
+
+		content += '</div>';
+		return content;
 	},
 
 	addSearchResultToMap(result: SearchResult) {
@@ -840,16 +1247,34 @@ export const mapStore = {
 		const map = currentState.map;
 		if (!map) return;
 
-		const sourceId = 'search-result-source';
-		const layerId = 'search-result-layer';
+		// Remove all search result layers (both old and new)
+		const layerIds = [
+			'search-result-layer', // Legacy single result layer
+			'search-results-points',
+			'search-results-labels',
+			'search-results-lines',
+			'search-results-polygons',
+			'search-results-polygon-outlines'
+		];
 
-		// Remove layer and source if they exist
-		if (map.getLayer(layerId)) {
-			map.removeLayer(layerId);
-		}
-		if (map.getSource(sourceId)) {
-			map.removeSource(sourceId);
-		}
+		const sourceIds = [
+			'search-result-source', // Legacy single result source
+			'search-results-source' // New multiple results source
+		];
+
+		// Remove layers
+		layerIds.forEach(layerId => {
+			if (map.getLayer(layerId)) {
+				map.removeLayer(layerId);
+			}
+		});
+
+		// Remove sources
+		sourceIds.forEach(sourceId => {
+			if (map.getSource(sourceId)) {
+				map.removeSource(sourceId);
+			}
+		});
 	},
 
 	// Zoom to search result
@@ -906,6 +1331,7 @@ export const mapStore = {
 			activeDynamicLayerIds: Array.from(currentState.activeDynamicLayerIds),
 			dynamicLayerOrder: currentState.dynamicLayerOrder,
 			dynamicLayerOpacities: Array.from(currentState.dynamicLayerOpacities.entries()),
+			dynamicLayerVisibilities: Array.from(currentState.dynamicLayerVisibilities.entries()),
 			favoriteLayerIds: Array.from(currentState.favoriteLayerIds),
 			layerSearchableFields: Array.from(currentState.layerSearchableFields.entries()).map(
 				([layerId, fields]) => [layerId, Array.from(fields)]

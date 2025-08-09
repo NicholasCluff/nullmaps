@@ -23,6 +23,14 @@ export interface SearchResult {
 	displayName?: string; // Primary display name for the feature
 	displayValue?: string; // Secondary display value
 	bbox?: [number, number, number, number]; // Bounding box for zooming
+	// Matched field information
+	matchedField?: string; // Name of the field that matched the search term
+	matchedValue?: string; // The actual value from the matched field
+	matchedFields?: Array<{
+		fieldName: string;
+		fieldValue: string;
+		fieldAlias?: string;
+	}>; // All fields that matched the search term
 }
 
 export interface SearchOptions {
@@ -284,7 +292,7 @@ async function searchLayerFeatures(
 
 		const features = data.features || [];
 		const results: SearchResult[] = features.map((feature: any, index: number) =>
-			processFeatureResult(feature, layer, index)
+			processFeatureResult(feature, layer, index, text, fields, selectedFields)
 		);
 
 		return {
@@ -309,13 +317,19 @@ async function searchLayerFeatures(
 export function processFeatureResult(
 	feature: any,
 	layer: SearchableLayer,
-	index: number
+	index: number,
+	searchTerm?: string,
+	fields?: LayerField[],
+	selectedFields?: Set<string>
 ): SearchResult {
 	const attributes = feature.attributes || {};
 	const geometry = feature.geometry;
 
-	// Try to find a good display name from common field names
-	const displayName = findDisplayName(attributes);
+	// Identify which fields matched the search term
+	const matchInfo = findMatchedFields(attributes, searchTerm, fields, selectedFields);
+	
+	// Try to find a good display name from common field names or use matched field
+	const displayName = matchInfo.bestMatch?.fieldValue || findDisplayName(attributes);
 	const displayValue = findDisplayValue(attributes, displayName);
 
 	// Process geometry if available
@@ -336,7 +350,116 @@ export function processFeatureResult(
 		geometry: processedGeometry,
 		displayName,
 		displayValue,
-		bbox
+		bbox,
+		matchedField: matchInfo.bestMatch?.fieldName,
+		matchedValue: matchInfo.bestMatch?.fieldValue,
+		matchedFields: matchInfo.allMatches
+	};
+}
+
+/**
+ * Find fields that matched the search term in the feature attributes
+ */
+function findMatchedFields(
+	attributes: Record<string, any>,
+	searchTerm?: string,
+	fields?: LayerField[],
+	selectedFields?: Set<string>
+): {
+	bestMatch?: { fieldName: string; fieldValue: string; fieldAlias?: string };
+	allMatches: Array<{ fieldName: string; fieldValue: string; fieldAlias?: string }>;
+} {
+	if (!searchTerm || !fields || fields.length === 0) {
+		return { allMatches: [] };
+	}
+
+	const normalizedSearchTerm = searchTerm.toLowerCase().trim();
+	const matches: Array<{ fieldName: string; fieldValue: string; fieldAlias?: string }> = [];
+
+	// Filter to searchable field types and user-selected fields (same logic as buildCaseInsensitiveFieldSearch)
+	const searchableFields = fields.filter((field) => {
+		const isSearchableType =
+			field.type === 'esriFieldTypeString' ||
+			field.type === 'esriFieldTypeOID' ||
+			field.type === 'esriFieldTypeInteger' ||
+			field.type === 'esriFieldTypeSmallInteger' ||
+			field.type === 'esriFieldTypeDouble' ||
+			field.type === 'esriFieldTypeSingle';
+
+		const isSelected = !selectedFields || selectedFields.size === 0 || selectedFields.has(field.name);
+		return isSearchableType && isSelected;
+	});
+
+	// Check each searchable field for matches
+	for (const field of searchableFields) {
+		const value = attributes[field.name];
+		if (value == null) continue;
+
+		const stringValue = String(value);
+		const normalizedValue = stringValue.toLowerCase();
+
+		// Check if this field contains the search term
+		if (field.type === 'esriFieldTypeString' && normalizedValue.includes(normalizedSearchTerm)) {
+			matches.push({
+				fieldName: field.name,
+				fieldValue: stringValue,
+				fieldAlias: field.alias
+			});
+		} else if (field.type !== 'esriFieldTypeString') {
+			// For numeric fields, check exact match
+			const numericSearchTerm = parseFloat(searchTerm);
+			if (!isNaN(numericSearchTerm) && parseFloat(stringValue) === numericSearchTerm) {
+				matches.push({
+					fieldName: field.name,
+					fieldValue: stringValue,
+					fieldAlias: field.alias
+				});
+			}
+		}
+	}
+
+	// Find the best match - prioritize exact matches, then shorter values, then common display field names
+	let bestMatch = matches[0];
+	if (matches.length > 1) {
+		// Score matches by relevance
+		const scoredMatches = matches.map((match) => {
+			const normalizedValue = match.fieldValue.toLowerCase();
+			let score = 0;
+
+			// Exact match gets highest score
+			if (normalizedValue === normalizedSearchTerm) {
+				score += 1000;
+			}
+			// Starts with search term
+			else if (normalizedValue.startsWith(normalizedSearchTerm)) {
+				score += 500;
+			}
+			// Contains search term
+			else {
+				score += 100;
+			}
+
+			// Prefer shorter values (more likely to be meaningful)
+			score += Math.max(0, 50 - match.fieldValue.length);
+
+			// Prefer common display field names
+			const fieldName = match.fieldName.toLowerCase();
+			if (fieldName.includes('name')) score += 30;
+			else if (fieldName.includes('title')) score += 25;
+			else if (fieldName.includes('label')) score += 20;
+			else if (fieldName.includes('id')) score += 10;
+
+			return { ...match, score };
+		});
+
+		// Sort by score and pick the best
+		scoredMatches.sort((a, b) => b.score - a.score);
+		bestMatch = scoredMatches[0];
+	}
+
+	return {
+		bestMatch,
+		allMatches: matches
 	};
 }
 

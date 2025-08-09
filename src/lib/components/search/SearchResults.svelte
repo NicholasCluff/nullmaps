@@ -95,7 +95,14 @@
 						<div class="result-name">
 							{truncateText(result.displayName || 'Unnamed Feature')}
 						</div>
-						{#if result.displayValue}
+						{#if result.matchedField && result.matchedValue && result.matchedValue !== result.displayName}
+							<div class="matched-field">
+								<span class="matched-value">{truncateText(result.matchedValue)}</span>
+								<span class="field-context">
+									({result.matchedFields?.find(f => f.fieldName === result.matchedField)?.fieldAlias || result.matchedField})
+								</span>
+							</div>
+						{:else if result.displayValue}
 							<div class="result-value">
 								{truncateText(result.displayValue)}
 							</div>
@@ -103,6 +110,9 @@
 						<div class="result-meta">
 							<span class="layer-name">{truncateText(result.layerName, 25)}</span>
 							<span class="service-name">{truncateText(result.serviceName, 20)}</span>
+							{#if result.matchedFields && result.matchedFields.length > 1}
+								<span class="multiple-matches">+{result.matchedFields.length - 1} more match{result.matchedFields.length - 1 === 1 ? '' : 'es'}</span>
+							{/if}
 						</div>
 					</div>
 					<div class="result-action">
@@ -275,6 +285,24 @@
 		line-height: 1.3;
 	}
 
+	.matched-field {
+		font-size: 13px;
+		margin-bottom: 4px;
+		line-height: 1.3;
+	}
+
+	.matched-value {
+		color: #059669;
+		font-weight: 500;
+	}
+
+	.field-context {
+		color: #9ca3af;
+		font-size: 12px;
+		font-weight: 400;
+		margin-left: 4px;
+	}
+
 	.result-meta {
 		display: flex;
 		align-items: center;
@@ -297,6 +325,15 @@
 		background: #f3f4f6;
 		padding: 2px 6px;
 		border-radius: 3px;
+	}
+
+	.multiple-matches {
+		font-size: 10px;
+		color: #f59e0b;
+		background: #fffbeb;
+		padding: 2px 6px;
+		border-radius: 3px;
+		font-weight: 500;
 	}
 
 	.result-action {
@@ -387,8 +424,21 @@
 			font-size: 12px;
 		}
 
+		.matched-field {
+			font-size: 12px;
+		}
+
+		.matched-value {
+			font-size: 12px;
+		}
+
+		.field-context {
+			font-size: 11px;
+		}
+
 		.layer-name,
-		.service-name {
+		.service-name,
+		.multiple-matches {
 			font-size: 10px;
 		}
 
