@@ -267,14 +267,14 @@ export const mapStore = {
 
 	// Legacy layer management (kept for compatibility during transition)
 	// Note: Basemaps are now handled declaratively via the style attribute
-	toggleLayer(layerId: string) {
+	toggleLayer(...args: unknown[]) {
 		// For backwards compatibility - basemaps now use setBasemap()
-		console.warn('toggleLayer is deprecated, use setBasemap() for basemap changes');
+		console.warn('toggleLayer is deprecated, use setBasemap() for basemap changes', args);
 	},
 
-	setLayerOpacity(layerId: string, opacity: number) {
+	setLayerOpacity(...args: unknown[]) {
 		// For backwards compatibility - basemaps opacity is handled by the style
-		console.warn('setLayerOpacity is deprecated for basemaps');
+		console.warn('setLayerOpacity is deprecated for basemaps', args);
 	},
 
 	// Helper to get current state synchronously
@@ -491,16 +491,23 @@ export const mapStore = {
 			// Get stored opacity or use default
 			const storedOpacity = currentState.dynamicLayerOpacities.get(layerId) || 0.8;
 
+			// Find proper insertion point for consistent layer positioning
+			const insertionPoint = this.findDynamicLayerInsertionPoint(map);
+
 			// Both vector (WMS) and raster layers are now added as raster layers
 			// since WMS renders vector data as images server-side
-			map.addLayer({
-				id: layerId,
-				type: 'raster',
-				source: sourceId,
-				paint: {
-					'raster-opacity': storedOpacity
-				}
-			});
+			map.addLayer(
+				{
+					id: layerId,
+					type: 'raster',
+					source: sourceId,
+					paint: {
+						'raster-opacity': storedOpacity
+					}
+				},
+				insertionPoint
+			);
+
 		}
 	},
 
@@ -529,11 +536,67 @@ export const mapStore = {
 		setTimeout(() => this.saveState(), 0);
 	},
 
+	// Helper function to find appropriate insertion point for dynamic layers
+	findDynamicLayerInsertionPoint(map: MapLibreMap): string | undefined {
+		const mapLayers = map.getStyle().layers;
+		
+		// For CartoDB basemaps, look for specific layer types to insert before
+		// Priority order: place labels > POI labels > road labels > other symbol layers > line layers
+		
+		// Look for place labels first (highest priority)
+		const placeLayer = mapLayers.find(
+			(layer) =>
+				layer.type === 'symbol' &&
+				layer.id.includes('place_')
+		);
+		
+		if (placeLayer) {
+			return placeLayer.id;
+		}
+		
+		// Then look for POI labels
+		const poiLayer = mapLayers.find(
+			(layer) =>
+				layer.type === 'symbol' &&
+				layer.id.includes('poi_')
+		);
+		
+		if (poiLayer) {
+			return poiLayer.id;
+		}
+		
+		// Then road name labels
+		const roadLayer = mapLayers.find(
+			(layer) =>
+				layer.type === 'symbol' &&
+				layer.id.includes('roadname_')
+		);
+		
+		if (roadLayer) {
+			return roadLayer.id;
+		}
+
+		// Fallback: find first non-background layer that's not one of our dynamic layers
+		const fallbackLayer = mapLayers.find(
+			(layer) =>
+				layer.type !== 'background' &&
+				!layer.id.endsWith('-source') &&
+				!mapLayers.some((l) => l.id === `${layer.id}-source`) // Not one of our dynamic layers
+		);
+
+		if (fallbackLayer) {
+			return fallbackLayer.id;
+		}
+		
+		return undefined;
+	},
+
 	reorderDynamicLayers(newOrder: string[]) {
 		mapState.update((state) => {
 			if (!state.map) return state;
 
 			const map = state.map;
+
 
 			// Update the layer order in state
 			const newState = {
@@ -549,31 +612,43 @@ export const mapStore = {
 				}
 			});
 
+			// Find the insertion point for all dynamic layers
+			const insertionPoint = this.findDynamicLayerInsertionPoint(map);
+
 			// Re-add layers in the new order (bottom to top)
 			// First layer in newOrder should be at the bottom, last should be at the top
 			newOrder.forEach((layerId) => {
 				const layer = state.dynamicLayers.get(layerId);
 				if (layer && state.activeDynamicLayerIds.has(layerId)) {
-					// Find the first feature layer to insert before it
-					const mapLayers = map.getStyle().layers;
-					const firstFeatureLayerId = mapLayers.find(
-						(l) => l.id.includes('_') && l.id !== layerId
-					)?.id;
-
 					const sourceId = `${layerId}-source`;
 
 					// Add source if it doesn't exist
 					if (!map.getSource(sourceId)) {
-						const exportUrl = `${layer.serviceUrl}/export?bbox={bbox-epsg-3857}&bboxSR=3857&layers=show:${layer.layerId}&layerDefs=&size=256%2C256&imageSR=3857&format=png&transparent=true&dpi=96&time=&layerTimeOptions=&dynamicLayers=&gdbVersion=&mapScale=&rotation=&datumTransformations=&layerParameterValues=&mapRangeValues=&layerRangeValues=&f=image`;
+						// Check if this is a basemap service
+						const isBasemapLayer =
+							layer.type === 'Basemap Layer' || layer.serviceName.startsWith('Basemaps/');
 
-						map.addSource(sourceId, {
-							type: 'raster',
-							tiles: [exportUrl],
-							tileSize: 256
-						});
+						if (isBasemapLayer) {
+							// Basemap services use tile server format
+							const tileUrl = `${layer.serviceUrl}/tile/{z}/{x}/{y}`;
+							map.addSource(sourceId, {
+								type: 'raster',
+								tiles: [tileUrl],
+								tileSize: 256
+							});
+						} else {
+							// Regular LIST service layers
+							const exportUrl = `${layer.serviceUrl}/export?bbox={bbox-epsg-3857}&bboxSR=3857&layers=show:${layer.layerId}&layerDefs=&size=256%2C256&imageSR=3857&format=png&transparent=true&dpi=96&time=&layerTimeOptions=&dynamicLayers=&gdbVersion=&mapScale=&rotation=&datumTransformations=&layerParameterValues=&mapRangeValues=&layerRangeValues=&f=image`;
+
+							map.addSource(sourceId, {
+								type: 'raster',
+								tiles: [exportUrl],
+								tileSize: 256
+							});
+						}
 					}
 
-					// Add layer
+					// Add layer with proper insertion point
 					if (!map.getLayer(layerId)) {
 						// Get stored opacity or use default
 						const storedOpacity = state.dynamicLayerOpacities.get(layerId) || 0.8;
@@ -587,8 +662,9 @@ export const mapStore = {
 									'raster-opacity': storedOpacity
 								}
 							},
-							firstFeatureLayerId
+							insertionPoint // Use consistent insertion point for all layers
 						);
+
 					}
 				}
 			});
@@ -715,7 +791,8 @@ export const mapStore = {
 			map.on('click', layerId, (e) => {
 				if (e.features && e.features[0]) {
 					const feature = e.features[0];
-					const coordinates = (feature.geometry as any).coordinates.slice();
+					const geometry = feature.geometry as { type: string; coordinates: number[] };
+					const coordinates = geometry.coordinates.slice();
 					const name = feature.properties?.name || 'Search Result';
 					const layerName = feature.properties?.layerName || '';
 
@@ -743,6 +820,7 @@ export const mapStore = {
 
 					// For now, just log the popup content - we'll improve this later
 					console.log('Search result clicked:', { name, layerName, coordinates });
+					// Popup element is created but not currently used in DOM
 				}
 			});
 
