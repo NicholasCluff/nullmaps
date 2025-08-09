@@ -3,7 +3,8 @@
  * Uses ArcGIS Query API with geometry parameter for spatial queries
  */
 
-import type { SearchableLayer } from './listService.js';
+import type { SearchableLayer, LayerField } from './listService.js';
+import { fetchLayerFields } from './listService.js';
 import type { SearchResult } from './searchService.js';
 import { processFeatureResult } from './searchService.js';
 
@@ -15,6 +16,7 @@ export interface ClickQueryOptions {
 	tolerance?: number; // Search tolerance in pixels (default: 5)
 	maxResults?: number; // Maximum results per layer (default: 5)
 	returnGeometry?: boolean; // Whether to return feature geometry (default: true)
+	searchText?: string; // Optional text to search across all fields (case-insensitive)
 }
 
 export interface ClickQueryResult extends SearchResult {
@@ -114,7 +116,7 @@ async function queryLayerAtLocation(
 	layer: SearchableLayer,
 	options: ClickQueryOptions
 ): Promise<ClickQueryResult[]> {
-	const { geometry, tolerance = 5, maxResults = 5, returnGeometry = true } = options;
+	const { geometry, maxResults = 5, returnGeometry = true, searchText } = options;
 
 	// LIST services expect a simple bounding box geometry format: "minX,minY,maxX,maxY"
 	// Create a bounding box around the click point using WGS84 coordinates (not Web Mercator)
@@ -126,6 +128,20 @@ async function queryLayerAtLocation(
 
 	const geometryParam = `${minX},${minY},${maxX},${maxY}`;
 
+	// Get field information for case-insensitive querying
+	let fields: LayerField[] = [];
+	try {
+		fields = layer.fields || (await fetchLayerFields(layer));
+	} catch (error) {
+		console.warn(`Could not fetch fields for ${layer.name}, using basic query:`, error);
+	}
+
+	// Build field list for outFields - use all available fields
+	const outFields = fields.length > 0 ? fields.map((f) => f.name).join(',') : '*';
+
+	// Build WHERE clause for case-insensitive field searching
+	const whereClause = buildCaseInsensitiveWhereClause(fields, searchText);
+
 	// Build query parameters for spatial query
 	const params = new URLSearchParams({
 		f: 'pjson',
@@ -133,11 +149,11 @@ async function queryLayerAtLocation(
 		geometryType: 'esriGeometryEnvelope', // Use envelope (bounding box) instead of point
 		spatialRel: 'esriSpatialRelIntersects',
 		inSR: '4326', // Input geometry is in WGS84 coordinates
-		outFields: '*', // Get all fields
+		outFields, // Use specific fields or all fields
 		returnGeometry: returnGeometry.toString(),
 		outSR: '4326', // Return results in WGS84 for MapLibre compatibility
 		resultRecordCount: maxResults.toString(),
-		where: '1=1' // Include all features that match spatial criteria
+		where: whereClause // Use field-based filtering for better results
 	});
 
 	const queryUrl = `${layer.serviceUrl}/${layer.layerId}/query?${params.toString()}`;
@@ -151,7 +167,11 @@ async function queryLayerAtLocation(
 		queryUrl: queryUrl,
 		geometryParam: geometryParam,
 		clickLocation: `${geometry.x}, ${geometry.y}`,
-		boundingBox: `${minX},${minY} to ${maxX},${maxY}`
+		boundingBox: `${minX},${minY} to ${maxX},${maxY}`,
+		whereClause: whereClause,
+		searchText: searchText || 'none',
+		fieldsCount: fields.length,
+		outFields: outFields === '*' ? 'all fields' : `${fields.length} specific fields`
 	});
 
 	try {
@@ -202,7 +222,7 @@ async function queryLayerAtLocation(
 		const features = data.features || [];
 
 		// Process each feature using the existing search service logic
-		const results: ClickQueryResult[] = features.map((feature: any, index: number) => {
+		const results: ClickQueryResult[] = features.map((feature: unknown, index: number) => {
 			// Use the existing feature processing function from searchService
 			const searchResult = processFeatureResult(feature, layer, index);
 			return {
@@ -224,19 +244,52 @@ async function queryLayerAtLocation(
 }
 
 /**
- * Convert WGS84 coordinates to Web Mercator (EPSG:3857)
- * Many ArcGIS services work better with Web Mercator coordinates
+ * Build case-insensitive WHERE clause for text field queries
+ * This helps find features that match query terms in any field
  */
-function convertToWebMercator(lng: number, lat: number): { x: number; y: number } {
-	// Web Mercator projection constants
-	const earthRadius = 6378137; // Earth radius in meters
-	const originShift = Math.PI * earthRadius;
+function buildCaseInsensitiveWhereClause(fields: LayerField[], searchTerm?: string): string {
+	if (!searchTerm || !fields.length) {
+		return '1=1'; // Return all features if no search term
+	}
 
-	const x = (lng * originShift) / 180.0;
-	let y = Math.log(Math.tan(((90 + lat) * Math.PI) / 360.0)) / (Math.PI / 180.0);
-	y = (y * originShift) / 180.0;
+	// Filter to text-based fields that can be searched
+	const searchableFields = fields.filter(
+		(field) =>
+			field.type === 'esriFieldTypeString' ||
+			field.type === 'esriFieldTypeOID' ||
+			field.type === 'esriFieldTypeInteger' ||
+			field.type === 'esriFieldTypeSmallInteger' ||
+			field.type === 'esriFieldTypeDouble' ||
+			field.type === 'esriFieldTypeSingle'
+	);
 
-	return { x, y };
+	if (searchableFields.length === 0) {
+		return '1=1';
+	}
+
+	// Create case-insensitive LIKE clauses for each searchable field
+	const fieldClauses = searchableFields
+		.map((field) => {
+			// For string fields, use UPPER() for case-insensitive search
+			if (field.type === 'esriFieldTypeString') {
+				return `UPPER(${field.name}) LIKE UPPER('%${searchTerm.replace(/'/g, "''")}%')`;
+			} else {
+				// For numeric fields, try exact match if the search term is numeric
+				const numericValue = parseFloat(searchTerm);
+				if (!isNaN(numericValue)) {
+					return `${field.name} = ${numericValue}`;
+				}
+				return null;
+			}
+		})
+		.filter((clause) => clause !== null);
+
+	if (fieldClauses.length === 0) {
+		return '1=1';
+	}
+
+	// Combine all field clauses with OR
+	return `(${fieldClauses.join(' OR ')})`;
 }
 
 /**
@@ -261,6 +314,25 @@ function calculateDistance(
 	// For polylines and polygons, we'd need more complex calculation
 	// For now, return undefined for non-point geometries
 	return undefined;
+}
+
+/**
+ * Enhanced click query that searches all fields case-insensitively
+ * Useful for implementing "identify" functionality with optional text filtering
+ */
+export async function queryFeaturesWithTextSearch(
+	layers: SearchableLayer[],
+	location: { x: number; y: number },
+	searchText?: string,
+	options?: Partial<ClickQueryOptions>
+): Promise<ClickQueryResponse> {
+	return queryFeaturesAtLocation(layers, {
+		geometry: location,
+		tolerance: options?.tolerance || 5,
+		maxResults: options?.maxResults || 10,
+		returnGeometry: options?.returnGeometry ?? true,
+		searchText
+	});
 }
 
 /**
@@ -321,7 +393,9 @@ export function formatClickResults(results: ClickQueryResult[]): {
 /**
  * Format feature attributes for display, filtering out technical fields
  */
-function formatAttributes(attributes: Record<string, any>): Array<{ key: string; value: string }> {
+function formatAttributes(
+	attributes: Record<string, unknown>
+): Array<{ key: string; value: string }> {
 	const excludeFields = new Set([
 		'OBJECTID',
 		'FID',
@@ -350,8 +424,7 @@ function formatAttributes(attributes: Record<string, any>): Array<{ key: string;
 		.map(([key, value]) => ({
 			key: formatFieldName(key),
 			value: String(value)
-		}))
-; // Show all relevant attributes
+		})); // Show all relevant attributes
 }
 
 /**

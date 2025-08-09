@@ -29,8 +29,11 @@ interface MapState {
 	dynamicLayers: Map<string, SearchableLayer>;
 	activeDynamicLayerIds: Set<string>;
 	dynamicLayerOrder: string[]; // Track layer rendering order (bottom to top)
+	dynamicLayerOpacities: Map<string, number>; // Track opacity for each layer
 	favoriteLayerIds: Set<string>;
 	layersLoading: boolean;
+	// Searchable field selections per layer
+	layerSearchableFields: Map<string, Set<string>>; // layerId -> Set of field names
 	// Search state
 	searchResults: SearchResult[];
 	selectedSearchResult: SearchResult | null;
@@ -47,7 +50,9 @@ interface PersistedMapState {
 	activeLayerIds: string[];
 	activeDynamicLayerIds: string[];
 	dynamicLayerOrder: string[];
+	dynamicLayerOpacities: Array<[string, number]>; // Persist layer opacities as array of [layerId, opacity]
 	favoriteLayerIds: string[];
+	layerSearchableFields: Array<[string, string[]]>; // Persist searchable fields as array of [layerId, fieldNames]
 	center: [number, number];
 	zoom: number;
 	bearing: number;
@@ -140,8 +145,13 @@ const mapState = writable<MapState>({
 	dynamicLayers: new Map(),
 	activeDynamicLayerIds: new Set(savedState?.activeDynamicLayerIds || []),
 	dynamicLayerOrder: savedState?.dynamicLayerOrder || [],
+	dynamicLayerOpacities: new Map(savedState?.dynamicLayerOpacities || []),
 	favoriteLayerIds: initialFavoriteLayerIds,
 	layersLoading: false,
+	// Searchable field selections per layer
+	layerSearchableFields: new Map(
+		savedState?.layerSearchableFields?.map(([layerId, fields]) => [layerId, new Set(fields)]) || []
+	),
 	// Search state
 	searchResults: [],
 	selectedSearchResult: null,
@@ -169,6 +179,7 @@ export const activeLayerIds = derived(mapState, ($state) => $state.activeLayerId
 export const dynamicLayers = derived(mapState, ($state) => $state.dynamicLayers);
 export const activeDynamicLayerIds = derived(mapState, ($state) => $state.activeDynamicLayerIds);
 export const dynamicLayerOrder = derived(mapState, ($state) => $state.dynamicLayerOrder);
+export const dynamicLayerOpacities = derived(mapState, ($state) => $state.dynamicLayerOpacities);
 export const favoriteLayerIds = derived(mapState, ($state) => $state.favoriteLayerIds);
 export const layersLoading = derived(mapState, ($state) => $state.layersLoading);
 export const searchResults = derived(mapState, ($state) => $state.searchResults);
@@ -179,6 +190,7 @@ export const clickQueryLocation = derived(mapState, ($state) => $state.clickQuer
 export const clickQueryTimestamp = derived(mapState, ($state) => $state.clickQueryTimestamp);
 export const clickQueryPanelVisible = derived(mapState, ($state) => $state.clickQueryPanelVisible);
 export const activeBasemap = derived(mapState, ($state) => $state.activeBasemap);
+export const layerSearchableFields = derived(mapState, ($state) => $state.layerSearchableFields);
 
 // Derive the current basemap style URL
 export const currentBasemapStyle = derived(
@@ -380,10 +392,17 @@ export const mapStore = {
 				}
 			}
 
+			// Initialize opacity if not already set
+			const newOpacities = new Map(state.dynamicLayerOpacities);
+			if (!newOpacities.has(layerId)) {
+				newOpacities.set(layerId, 0.8); // Default opacity
+			}
+
 			const newState = {
 				...state,
 				activeDynamicLayerIds: newActiveDynamicLayerIds,
-				dynamicLayerOrder: newDynamicLayerOrder
+				dynamicLayerOrder: newDynamicLayerOrder,
+				dynamicLayerOpacities: newOpacities
 			};
 
 			// Update map if available
@@ -427,6 +446,10 @@ export const mapStore = {
 
 		const sourceId = `${layerId}-source`;
 
+		// Check if this is a basemap service
+		const isBasemapLayer =
+			layer.type === 'Basemap Layer' || layer.serviceName.startsWith('Basemaps/');
+
 		// Determine if this is a vector or raster layer based on geometry type
 		const isVectorLayer =
 			layer.geometryType &&
@@ -436,7 +459,15 @@ export const mapStore = {
 
 		// Add source if it doesn't exist
 		if (!map.getSource(sourceId)) {
-			if (isVectorLayer) {
+			if (isBasemapLayer) {
+				// Basemap services use tile server format for better performance
+				const tileUrl = `${layer.serviceUrl}/tile/{z}/{x}/{y}`;
+				map.addSource(sourceId, {
+					type: 'raster',
+					tiles: [tileUrl],
+					tileSize: 256
+				});
+			} else if (isVectorLayer) {
 				// Use WMS endpoint for feature layers - renders vector data as images server-side
 				const wmsUrl = `${layer.serviceUrl}/WMSServer?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image%2Fpng&TRANSPARENT=true&LAYERS=${layer.layerId}&CRS=EPSG%3A3857&STYLES=&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}`;
 				map.addSource(sourceId, {
@@ -457,6 +488,9 @@ export const mapStore = {
 
 		// Add layer if it doesn't exist
 		if (!map.getLayer(layerId)) {
+			// Get stored opacity or use default
+			const storedOpacity = currentState.dynamicLayerOpacities.get(layerId) || 0.8;
+
 			// Both vector (WMS) and raster layers are now added as raster layers
 			// since WMS renders vector data as images server-side
 			map.addLayer({
@@ -464,19 +498,35 @@ export const mapStore = {
 				type: 'raster',
 				source: sourceId,
 				paint: {
-					'raster-opacity': 0.8
+					'raster-opacity': storedOpacity
 				}
 			});
 		}
 	},
 
 	setDynamicLayerOpacity(layerId: string, opacity: number) {
+		const clampedOpacity = Math.max(0, Math.min(1, opacity));
+
+		// Update state first
+		mapState.update((state) => {
+			const newOpacities = new Map(state.dynamicLayerOpacities);
+			newOpacities.set(layerId, clampedOpacity);
+			return {
+				...state,
+				dynamicLayerOpacities: newOpacities
+			};
+		});
+
+		// Update map layer if it exists
 		const currentState = this.getCurrentState();
 		const map = currentState.map;
-		if (!map || !map.getLayer(layerId)) return;
+		if (map && map.getLayer(layerId)) {
+			// All layers are now raster layers (WMS renders vector data as images)
+			map.setPaintProperty(layerId, 'raster-opacity', clampedOpacity);
+		}
 
-		// All layers are now raster layers (WMS renders vector data as images)
-		map.setPaintProperty(layerId, 'raster-opacity', Math.max(0, Math.min(1, opacity)));
+		// Save to localStorage
+		setTimeout(() => this.saveState(), 0);
 	},
 
 	reorderDynamicLayers(newOrder: string[]) {
@@ -525,13 +575,16 @@ export const mapStore = {
 
 					// Add layer
 					if (!map.getLayer(layerId)) {
+						// Get stored opacity or use default
+						const storedOpacity = state.dynamicLayerOpacities.get(layerId) || 0.8;
+
 						map.addLayer(
 							{
 								id: layerId,
 								type: 'raster',
 								source: sourceId,
 								paint: {
-									'raster-opacity': 0.8
+									'raster-opacity': storedOpacity
 								}
 							},
 							firstFeatureLayerId
@@ -774,7 +827,11 @@ export const mapStore = {
 			activeLayerIds: Array.from(currentState.activeLayerIds),
 			activeDynamicLayerIds: Array.from(currentState.activeDynamicLayerIds),
 			dynamicLayerOrder: currentState.dynamicLayerOrder,
+			dynamicLayerOpacities: Array.from(currentState.dynamicLayerOpacities.entries()),
 			favoriteLayerIds: Array.from(currentState.favoriteLayerIds),
+			layerSearchableFields: Array.from(currentState.layerSearchableFields.entries()).map(
+				([layerId, fields]) => [layerId, Array.from(fields)]
+			),
 			center: currentState.center,
 			zoom: currentState.zoom,
 			bearing: currentState.bearing
@@ -808,6 +865,46 @@ export const mapStore = {
 			clickQueryTimestamp: null,
 			clickQueryPanelVisible: false
 		}));
+	},
+
+	// Searchable field management
+	setLayerSearchableFields(layerId: string, fieldNames: Set<string>) {
+		mapState.update((state) => {
+			const newSearchableFields = new Map(state.layerSearchableFields);
+			newSearchableFields.set(layerId, new Set(fieldNames));
+			return {
+				...state,
+				layerSearchableFields: newSearchableFields
+			};
+		});
+		// Save to localStorage
+		setTimeout(() => this.saveState(), 0);
+	},
+
+	toggleFieldSearchable(layerId: string, fieldName: string) {
+		mapState.update((state) => {
+			const newSearchableFields = new Map(state.layerSearchableFields);
+			const currentFields = newSearchableFields.get(layerId) || new Set();
+
+			if (currentFields.has(fieldName)) {
+				currentFields.delete(fieldName);
+			} else {
+				currentFields.add(fieldName);
+			}
+
+			newSearchableFields.set(layerId, currentFields);
+			return {
+				...state,
+				layerSearchableFields: newSearchableFields
+			};
+		});
+		// Save to localStorage
+		setTimeout(() => this.saveState(), 0);
+	},
+
+	getLayerSearchableFields(layerId: string): Set<string> {
+		const currentState = this.getCurrentState();
+		return currentState.layerSearchableFields.get(layerId) || new Set();
 	},
 
 	// Clear all stored state (useful for debugging)

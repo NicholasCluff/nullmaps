@@ -3,12 +3,19 @@
 		mapStore,
 		activeDynamicLayerIds,
 		dynamicLayers,
-		dynamicLayerOrder
+		dynamicLayerOrder,
+		dynamicLayerOpacities,
+		layerSearchableFields
 	} from '../../stores/mapStore.js';
+	import { fetchLayerFields, type LayerField } from '../../services/listService.js';
 	import { flip } from 'svelte/animate';
 	import { dndzone } from 'svelte-dnd-action';
 
 	let drawerOpen = false;
+
+	// Field selection state
+	let expandedFieldSections = new Set<string>(); // Track which layer field sections are expanded
+	let layerFields = new Map<string, LayerField[]>(); // Cache layer fields locally
 
 	let activeLayersList: Array<{
 		id: string;
@@ -51,6 +58,46 @@
 
 	function removeLayer(layerId: string) {
 		mapStore.toggleDynamicLayer(layerId);
+	}
+
+	function handleOpacityChange(layerId: string, opacity: number) {
+		mapStore.setDynamicLayerOpacity(layerId, opacity / 100); // Convert percentage to decimal
+	}
+
+	// Field selection functions
+	function toggleFieldSection(layerId: string) {
+		if (expandedFieldSections.has(layerId)) {
+			expandedFieldSections.delete(layerId);
+		} else {
+			expandedFieldSections.add(layerId);
+			// Fetch fields if not already cached
+			if (!layerFields.has(layerId)) {
+				loadLayerFields(layerId);
+			}
+		}
+		expandedFieldSections = new Set(expandedFieldSections); // Trigger reactivity
+	}
+
+	async function loadLayerFields(layerId: string) {
+		const layer = $dynamicLayers.get(layerId);
+		if (!layer) return;
+
+		try {
+			const fields = await fetchLayerFields(layer);
+			layerFields.set(layerId, fields);
+			layerFields = new Map(layerFields); // Trigger reactivity
+		} catch (error) {
+			console.warn(`Failed to load fields for layer ${layer.name}:`, error);
+		}
+	}
+
+	function toggleFieldSearchable(layerId: string, fieldName: string) {
+		mapStore.toggleFieldSearchable(layerId, fieldName);
+	}
+
+	function isFieldSearchable(layerId: string, fieldName: string): boolean {
+		const searchableFields = $layerSearchableFields.get(layerId) || new Set();
+		return searchableFields.has(fieldName);
 	}
 </script>
 
@@ -146,6 +193,91 @@
 							<div class="layer-meta">
 								<span class="service-name">{layer.serviceName.replace('Public/', '')}</span>
 								<span class="layer-type">{layer.type}</span>
+							</div>
+							<div class="opacity-control">
+								<label class="opacity-label" for="opacity-{layer.id}">
+									<span>Opacity</span>
+									<span class="opacity-value"
+										>{Math.round(($dynamicLayerOpacities.get(layer.id) || 0.8) * 100)}%</span
+									>
+								</label>
+								<input
+									id="opacity-{layer.id}"
+									type="range"
+									min="0"
+									max="100"
+									value={Math.round(($dynamicLayerOpacities.get(layer.id) || 0.8) * 100)}
+									class="opacity-slider"
+									oninput={(e) =>
+										handleOpacityChange(layer.id, Number((e.target as HTMLInputElement)?.value))}
+									aria-label="Opacity for {layer.name}"
+								/>
+							</div>
+
+							<!-- Field Selection Section -->
+							<div class="field-selection">
+								<button
+									class="field-toggle-button"
+									class:expanded={expandedFieldSections.has(layer.id)}
+									onclick={() => toggleFieldSection(layer.id)}
+									aria-label="Toggle searchable fields for {layer.name}"
+								>
+									<svg
+										class="expand-icon"
+										width="14"
+										height="14"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+									>
+										<path d="M9 6L15 12L9 18"></path>
+									</svg>
+									<span>Search Fields</span>
+									{#if ($layerSearchableFields.get(layer.id)?.size || 0) > 0}
+										<span class="selected-count"
+											>({$layerSearchableFields.get(layer.id)?.size || 0})</span
+										>
+									{/if}
+								</button>
+
+								{#if expandedFieldSections.has(layer.id)}
+									<div class="field-list">
+										{#if layerFields.has(layer.id)}
+											{@const fields = layerFields.get(layer.id)}
+											{#if fields && fields.length > 0}
+												<div class="field-list-header">
+													<small>Select fields to include in search queries</small>
+												</div>
+												<div class="field-checkboxes">
+													{#each fields as field (field.name)}
+														<label class="field-checkbox">
+															<input
+																type="checkbox"
+																checked={isFieldSearchable(layer.id, field.name)}
+																onchange={() => toggleFieldSearchable(layer.id, field.name)}
+															/>
+															<span class="checkbox-custom"></span>
+															<span class="field-info">
+																<span class="field-name">{field.alias || field.name}</span>
+																<span class="field-type"
+																	>{field.type?.replace('esriFieldType', '') || 'Unknown'}</span
+																>
+															</span>
+														</label>
+													{/each}
+												</div>
+											{:else}
+												<div class="no-fields">No searchable fields available</div>
+											{/if}
+										{:else}
+											<div class="loading-fields">
+												<div class="loading-spinner"></div>
+												<span>Loading fields...</span>
+											</div>
+										{/if}
+									</div>
+								{/if}
 							</div>
 						</div>
 
@@ -324,7 +456,7 @@
 
 	.layer-item {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		padding: 12px 16px;
 		border-bottom: 1px solid #f3f4f6;
 		background: white;
@@ -333,7 +465,6 @@
 		user-select: none;
 		-webkit-user-select: none;
 		-moz-user-select: none;
-		-ms-user-select: none;
 	}
 
 	.layer-item:hover {
@@ -350,6 +481,7 @@
 	.drag-handle {
 		color: #9ca3af;
 		margin-right: 12px;
+		margin-top: 2px;
 		flex-shrink: 0;
 		cursor: grab;
 		user-select: none;
@@ -413,12 +545,80 @@
 		border-radius: 4px;
 		transition: all 0.2s;
 		flex-shrink: 0;
+		margin-top: 2px;
 		opacity: 0.7;
 	}
 
 	.remove-button:hover {
 		background: #fef2f2;
 		opacity: 1;
+	}
+
+	/* Opacity Control Styles */
+	.opacity-control {
+		margin-top: 12px;
+		width: 100%;
+	}
+
+	.opacity-label {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 11px;
+		font-weight: 500;
+		color: #6b7280;
+		margin-bottom: 6px;
+		cursor: default;
+		user-select: none;
+	}
+
+	.opacity-value {
+		color: #374151;
+		font-weight: 600;
+	}
+
+	.opacity-slider {
+		width: 100%;
+		height: 4px;
+		background: #e5e7eb;
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+		-webkit-appearance: none;
+		appearance: none;
+	}
+
+	.opacity-slider::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 16px;
+		height: 16px;
+		background: #2563eb;
+		border-radius: 50%;
+		cursor: pointer;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+		transition: all 0.2s;
+	}
+
+	.opacity-slider::-webkit-slider-thumb:hover {
+		background: #1d4ed8;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+	}
+
+	.opacity-slider::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		background: #2563eb;
+		border-radius: 50%;
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+		transition: all 0.2s;
+	}
+
+	.opacity-slider::-moz-range-thumb:hover {
+		background: #1d4ed8;
+		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 	}
 
 	.drawer-backdrop {
@@ -464,5 +664,198 @@
 
 	.drawer-content::-webkit-scrollbar-thumb:hover {
 		background: rgba(0, 0, 0, 0.3);
+	}
+
+	/* Field Selection Styles */
+	.field-selection {
+		margin-top: 12px;
+		border-top: 1px solid #f3f4f6;
+		padding-top: 8px;
+	}
+
+	.field-toggle-button {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 6px 8px;
+		background: #f9fafb;
+		border: 1px solid #e5e7eb;
+		border-radius: 4px;
+		font-size: 12px;
+		color: #374151;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.field-toggle-button:hover {
+		background: #f3f4f6;
+		border-color: #d1d5db;
+	}
+
+	.field-toggle-button.expanded {
+		background: #eff6ff;
+		border-color: #bfdbfe;
+		color: #2563eb;
+	}
+
+	.expand-icon {
+		transition: transform 0.2s;
+		flex-shrink: 0;
+	}
+
+	.field-toggle-button.expanded .expand-icon {
+		transform: rotate(90deg);
+	}
+
+	.selected-count {
+		margin-left: auto;
+		background: #2563eb;
+		color: white;
+		padding: 1px 6px;
+		border-radius: 10px;
+		font-size: 10px;
+		font-weight: 600;
+	}
+
+	.field-list {
+		margin-top: 8px;
+		padding: 8px;
+		background: #f9fafb;
+		border: 1px solid #e5e7eb;
+		border-radius: 4px;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.field-list-header {
+		margin-bottom: 8px;
+		padding-bottom: 6px;
+		border-bottom: 1px solid #e5e7eb;
+	}
+
+	.field-list-header small {
+		color: #6b7280;
+		font-size: 11px;
+	}
+
+	.field-checkboxes {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.field-checkbox {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 6px;
+		border-radius: 3px;
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.field-checkbox:hover {
+		background: #f3f4f6;
+	}
+
+	.field-checkbox input[type='checkbox'] {
+		display: none;
+	}
+
+	.checkbox-custom {
+		width: 14px;
+		height: 14px;
+		border: 1.5px solid #d1d5db;
+		border-radius: 2px;
+		background: white;
+		flex-shrink: 0;
+		position: relative;
+		transition: all 0.2s;
+	}
+
+	.field-checkbox input[type='checkbox']:checked + .checkbox-custom {
+		background: #2563eb;
+		border-color: #2563eb;
+	}
+
+	.field-checkbox input[type='checkbox']:checked + .checkbox-custom::after {
+		content: '';
+		position: absolute;
+		top: 1px;
+		left: 4px;
+		width: 4px;
+		height: 7px;
+		border: 1.5px solid white;
+		border-top: none;
+		border-left: none;
+		transform: rotate(45deg);
+	}
+
+	.field-info {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.field-name {
+		font-size: 12px;
+		color: #374151;
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.field-type {
+		font-size: 10px;
+		color: #6b7280;
+		font-weight: 400;
+	}
+
+	.no-fields,
+	.loading-fields {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 16px;
+		font-size: 12px;
+		color: #6b7280;
+		text-align: center;
+	}
+
+	.loading-spinner {
+		width: 12px;
+		height: 12px;
+		border: 2px solid #e5e7eb;
+		border-top: 2px solid #2563eb;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		0% {
+			transform: rotate(0deg);
+		}
+		100% {
+			transform: rotate(360deg);
+		}
+	}
+
+	/* Field list scrollbar */
+	.field-list::-webkit-scrollbar {
+		width: 3px;
+	}
+
+	.field-list::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.field-list::-webkit-scrollbar-thumb {
+		background: rgba(0, 0, 0, 0.2);
+		border-radius: 1.5px;
 	}
 </style>

@@ -34,6 +34,13 @@ export interface ArcGISMapServer {
 	};
 }
 
+export interface LayerField {
+	name: string;
+	type: string;
+	alias?: string;
+	length?: number;
+}
+
 export interface SearchableLayer {
 	id: string; // Unique ID combining service and layer
 	layerId: number; // Original layer ID from ArcGIS
@@ -46,15 +53,20 @@ export interface SearchableLayer {
 	defaultVisibility: boolean;
 	minScale?: number;
 	maxScale?: number;
+	fields?: LayerField[]; // Cached field information for query optimization
+	searchableFields?: Set<string>; // User-selected field names for searching
 }
 
 const LIST_BASE_URL = 'https://services.thelist.tas.gov.au/arcgis/rest/services';
 const PUBLIC_SERVICES_URL = `${LIST_BASE_URL}/Public?f=pjson`;
+const BASEMAPS_SERVICES_URL = `${LIST_BASE_URL}/Basemaps?f=pjson`;
 
 // Cache for loaded services to avoid repeated requests
 const servicesCache = new Map<string, ArcGISMapServer>();
 let allLayersCache: SearchableLayer[] | null = null;
 let servicesListCache: string[] | null = null;
+// Cache for layer fields to avoid repeated field requests
+const layerFieldsCache = new Map<string, LayerField[]>();
 
 /**
  * Fetch the list of all public map services
@@ -77,6 +89,7 @@ export async function fetchPublicServices(): Promise<string[]> {
 		}
 
 		// Extract service names and filter for MapServer type
+		// For Public services, we keep just the service name (no prefix) for backward compatibility
 		servicesListCache = data.services
 			.filter((service: { type: string; name: string }) => service.type === 'MapServer')
 			.map((service: { type: string; name: string }) => service.name);
@@ -84,6 +97,35 @@ export async function fetchPublicServices(): Promise<string[]> {
 		return servicesListCache!;
 	} catch (error) {
 		console.error('Error fetching public services:', error);
+		throw error;
+	}
+}
+
+/**
+ * Fetch the list of all basemap services
+ */
+export async function fetchBasemapServices(): Promise<string[]> {
+	try {
+		const response = await fetch(BASEMAPS_SERVICES_URL);
+		if (!response.ok) {
+			throw new Error(`Failed to fetch basemap services: ${response.statusText}`);
+		}
+
+		const data = await response.json();
+
+		if (!data.services || !Array.isArray(data.services)) {
+			throw new Error('Invalid basemap services response format');
+		}
+
+		// Extract service names and filter for MapServer type
+		// Service names already include "Basemaps/" prefix, so don't add it again
+		const basemapServices = data.services
+			.filter((service: { type: string; name: string }) => service.type === 'MapServer')
+			.map((service: { type: string; name: string }) => service.name);
+
+		return basemapServices;
+	} catch (error) {
+		console.error('Error fetching basemap services:', error);
 		throw error;
 	}
 }
@@ -97,7 +139,12 @@ export async function fetchMapService(serviceName: string): Promise<ArcGISMapSer
 	}
 
 	try {
-		const serviceUrl = `${LIST_BASE_URL}/${serviceName}/MapServer`;
+		// Handle both Public and Basemaps service paths
+		// serviceName could be 'Public/ServiceName' or 'Basemaps/ServiceName' or just 'ServiceName' (for Public)
+		const serviceUrl = serviceName.includes('/')
+			? `${LIST_BASE_URL}/${serviceName}/MapServer`
+			: `${LIST_BASE_URL}/Public/${serviceName}/MapServer`;
+
 		const response = await fetch(`${serviceUrl}?f=pjson`);
 
 		if (!response.ok) {
@@ -106,8 +153,22 @@ export async function fetchMapService(serviceName: string): Promise<ArcGISMapSer
 
 		const data = await response.json();
 
-		if (!data.layers || !Array.isArray(data.layers)) {
-			throw new Error(`Invalid service response for ${serviceName}`);
+		// Basemap services might not have layers array, or have an empty one
+		// For basemaps, we'll create a virtual layer representing the entire service
+		if (!data.layers || !Array.isArray(data.layers) || data.layers.length === 0) {
+			if (serviceName.startsWith('Basemaps/')) {
+				data.layers = [
+					{
+						id: 0,
+						name: data.mapName || serviceName.split('/')[1],
+						type: 'Raster Layer',
+						description: data.description || data.serviceDescription,
+						defaultVisibility: false
+					}
+				];
+			} else {
+				throw new Error(`Invalid service response for ${serviceName}`);
+			}
 		}
 
 		const mapServer: ArcGISMapServer = {
@@ -153,7 +214,7 @@ export async function fetchMapService(serviceName: string): Promise<ArcGISMapSer
 }
 
 /**
- * Load all available layers from all public services
+ * Load all available layers from all public and basemap services
  */
 export async function loadAllLayers(): Promise<SearchableLayer[]> {
 	if (allLayersCache) {
@@ -161,7 +222,12 @@ export async function loadAllLayers(): Promise<SearchableLayer[]> {
 	}
 
 	try {
-		const serviceNames = await fetchPublicServices();
+		// Fetch both public and basemap services
+		const [publicServices, basemapServices] = await Promise.all([
+			fetchPublicServices(),
+			fetchBasemapServices()
+		]);
+		const serviceNames = [...publicServices, ...basemapServices];
 		const allLayers: SearchableLayer[] = [];
 
 		// Load services in batches to avoid overwhelming the server
@@ -171,21 +237,42 @@ export async function loadAllLayers(): Promise<SearchableLayer[]> {
 			const batchPromises = batch.map(async (serviceName) => {
 				try {
 					const mapServer = await fetchMapService(serviceName);
-					return mapServer.layers.map(
-						(layer): SearchableLayer => ({
-							id: `${serviceName}_${layer.id}`,
-							layerId: layer.id,
-							name: layer.name,
-							description: layer.description,
+
+					// Handle basemap services differently - they're meant to be used as single map layers
+					if (serviceName.startsWith('Basemaps/')) {
+						// For basemaps, create a single layer representing the entire service
+						const basemapLayer = {
+							id: serviceName.replace('/', '_'), // Convert Basemaps/ServiceName to Basemaps_ServiceName
+							layerId: 0, // Basemaps typically use layer 0 or the entire service
+							name: mapServer.name || serviceName.split('/')[1], // Use map name or service name
+							description: mapServer.description || `Tasmania ${serviceName.split('/')[1]} basemap`,
 							serviceName: mapServer.serviceName,
 							serviceUrl: mapServer.serviceUrl,
-							type: layer.type,
-							geometryType: layer.geometryType,
-							defaultVisibility: layer.defaultVisibility,
-							minScale: layer.minScale,
-							maxScale: layer.maxScale
-						})
-					);
+							type: 'Basemap Layer',
+							geometryType: undefined, // Basemaps don't have geometry types
+							defaultVisibility: false, // Don't show basemaps by default as overlays
+							minScale: 0,
+							maxScale: 0
+						};
+						return [basemapLayer];
+					} else {
+						// Handle regular Public services with multiple layers
+						return mapServer.layers.map(
+							(layer): SearchableLayer => ({
+								id: `${serviceName}_${layer.id}`,
+								layerId: layer.id,
+								name: layer.name,
+								description: layer.description,
+								serviceName: mapServer.serviceName,
+								serviceUrl: mapServer.serviceUrl,
+								type: layer.type,
+								geometryType: layer.geometryType,
+								defaultVisibility: layer.defaultVisibility,
+								minScale: layer.minScale,
+								maxScale: layer.maxScale
+							})
+						);
+					}
 				} catch (error) {
 					console.warn(`Failed to load service ${serviceName}:`, error);
 					return [];
@@ -260,10 +347,53 @@ export function getLayerQueryUrl(layer: SearchableLayer): string {
 }
 
 /**
+ * Fetch field information for a specific layer
+ */
+export async function fetchLayerFields(layer: SearchableLayer): Promise<LayerField[]> {
+	const cacheKey = layer.id;
+
+	if (layerFieldsCache.has(cacheKey)) {
+		return layerFieldsCache.get(cacheKey)!;
+	}
+
+	try {
+		const fieldUrl = `${layer.serviceUrl}/${layer.layerId}?f=pjson`;
+		const response = await fetch(fieldUrl);
+
+		if (!response.ok) {
+			throw new Error(`Failed to fetch fields for layer ${layer.name}: ${response.statusText}`);
+		}
+
+		const data = await response.json();
+
+		if (data.error) {
+			throw new Error(`ArcGIS error: ${data.error.message || 'Unknown error'}`);
+		}
+
+		const fields: LayerField[] = (data.fields || []).map((field: unknown) => {
+			const f = field as Record<string, unknown>;
+			return {
+				name: String(f.name || ''),
+				type: String(f.type || ''),
+				alias: f.alias ? String(f.alias) : undefined,
+				length: typeof f.length === 'number' ? f.length : undefined
+			};
+		});
+
+		layerFieldsCache.set(cacheKey, fields);
+		return fields;
+	} catch (error) {
+		console.error(`Error fetching fields for layer ${layer.name}:`, error);
+		throw error;
+	}
+}
+
+/**
  * Clear all caches (useful for development or forced refresh)
  */
 export function clearCache(): void {
 	servicesCache.clear();
 	allLayersCache = null;
 	servicesListCache = null;
+	layerFieldsCache.clear();
 }

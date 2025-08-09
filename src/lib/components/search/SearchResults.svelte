@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { SearchResult } from '../../services/searchService.js';
-	import { mapStore } from '../../stores/mapStore.js';
 
 	interface Props {
 		results: SearchResult[];

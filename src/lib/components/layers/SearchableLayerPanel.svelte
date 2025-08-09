@@ -110,7 +110,7 @@
 	}
 
 	// Calculate active layer counts
-	$: basemapActiveCount = 1; // Always one active basemap
+	let basemapActiveCount = 1; // Always one active basemap
 	$: dynamicActiveCount = $activeDynamicLayerIds.size;
 	$: favoritesCount = $favoriteLayerIds.size;
 </script>
@@ -448,12 +448,6 @@
 		margin: 0 0 4px 0;
 	}
 
-	.panel-description {
-		font-size: 14px;
-		color: #6b7280;
-		margin: 0 0 16px 0;
-	}
-
 	.tab-navigation {
 		display: flex;
 		gap: 2px;
@@ -551,42 +545,6 @@
 		margin-top: 8px;
 		font-size: 12px;
 		color: #6b7280;
-	}
-
-	.favorites-section {
-		margin-top: 12px;
-		padding-top: 12px;
-		border-top: 1px solid #e5e7eb;
-	}
-
-	.favorites-filter {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 12px;
-		background: #fef3c7;
-		border: 1px solid #fbbf24;
-		border-radius: 6px;
-		color: #92400e;
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.2s;
-	}
-
-	.favorites-filter:hover {
-		background: #fef3c7;
-		border-color: #f59e0b;
-	}
-
-	.favorites-filter.active {
-		background: #f59e0b;
-		color: white;
-		border-color: #f59e0b;
-	}
-
-	.favorites-filter.active svg {
-		fill: currentColor;
 	}
 
 	.loading-section,
@@ -854,21 +812,6 @@
 		line-height: 1.4;
 		margin-bottom: 8px;
 		padding-left: 30px;
-	}
-
-	.basemap-indicator {
-		flex-shrink: 0;
-	}
-
-	.basemap-badge {
-		background: #f3f4f6;
-		color: #6b7280;
-		font-size: 11px;
-		font-weight: 600;
-		padding: 2px 6px;
-		border-radius: 4px;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
 	}
 
 	.opacity-control {

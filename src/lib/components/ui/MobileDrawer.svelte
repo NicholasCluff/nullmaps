@@ -167,25 +167,6 @@
 		flex-shrink: 0;
 	}
 
-	.footer-links {
-		display: flex;
-		gap: 16px;
-		margin-bottom: 16px;
-	}
-
-	.footer-links a {
-		color: #2563eb;
-		text-decoration: none;
-		font-size: 14px;
-		font-weight: 500;
-		transition: color 0.2s;
-	}
-
-	.footer-links a:hover {
-		color: #1d4ed8;
-		text-decoration: underline;
-	}
-
 	.footer-attribution {
 		font-size: 12px;
 		color: #6b7280;
@@ -218,11 +199,6 @@
 
 		.drawer-footer {
 			padding: 16px;
-		}
-
-		.footer-links {
-			flex-direction: column;
-			gap: 8px;
 		}
 	}
 

@@ -222,6 +222,7 @@
 		dragRotate={true}
 		pitch={0}
 		projection={{ type: 'globe' }}
+		diffStyleUpdates={true}
 		bind:map
 	>
 		{#if $mapState.isLoaded}

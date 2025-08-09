@@ -2,7 +2,9 @@
  * Service for searching features within active map layers using ArcGIS Query API
  */
 
-import type { SearchableLayer } from './listService.js';
+import type { SearchableLayer, LayerField } from './listService.js';
+import { fetchLayerFields } from './listService.js';
+import { mapStore } from '../stores/mapStore.js';
 
 export interface SearchResult {
 	id: string; // Unique identifier for the result
@@ -127,6 +129,66 @@ export async function searchFeatures(
 }
 
 /**
+ * Build case-insensitive WHERE clause for searching across selected text fields
+ */
+function buildCaseInsensitiveFieldSearch(
+	fields: LayerField[],
+	searchTerm: string,
+	selectedFieldNames?: Set<string>
+): string {
+	if (!searchTerm || !fields.length) {
+		return '1=1';
+	}
+
+	// Filter to searchable field types and user-selected fields
+	const searchableFields = fields.filter((field) => {
+		// Check if field type is searchable
+		const isSearchableType =
+			field.type === 'esriFieldTypeString' ||
+			field.type === 'esriFieldTypeOID' ||
+			field.type === 'esriFieldTypeInteger' ||
+			field.type === 'esriFieldTypeSmallInteger' ||
+			field.type === 'esriFieldTypeDouble' ||
+			field.type === 'esriFieldTypeSingle';
+
+		// If selectedFieldNames is provided, only include selected fields
+		const isSelected = !selectedFieldNames || selectedFieldNames.has(field.name);
+
+		return isSearchableType && isSelected;
+	});
+
+	if (searchableFields.length === 0) {
+		return '1=1';
+	}
+
+	const escapedTerm = searchTerm.replace(/'/g, "''"); // Escape single quotes
+
+	// Create case-insensitive LIKE clauses for each searchable field
+	const fieldClauses = searchableFields
+		.map((field) => {
+			// For string fields, use UPPER() for case-insensitive search
+			if (field.type === 'esriFieldTypeString') {
+				return `UPPER(${field.name}) LIKE UPPER('%${escapedTerm}%')`;
+			} else {
+				// For numeric fields, try exact match if the search term is numeric
+				const numericValue = parseFloat(searchTerm);
+				if (!isNaN(numericValue)) {
+					return `${field.name} = ${numericValue}`;
+				}
+				return null;
+			}
+		})
+		.filter((clause) => clause !== null);
+
+	if (fieldClauses.length === 0) {
+		return '1=1';
+	}
+
+	// Combine all field clauses with OR
+	return `(${fieldClauses.join(' OR ')})`;
+}
+
+/**
  * Search features in a single layer
  */
 async function searchLayerFeatures(
@@ -145,15 +207,53 @@ async function searchLayerFeatures(
 		resultRecordCount: maxResults.toString()
 	});
 
-	// Add search criteria
-	if (text) {
+	// Get field information for enhanced case-insensitive search
+	let fields: LayerField[] = [];
+	try {
+		fields = layer.fields || (await fetchLayerFields(layer));
+	} catch (error) {
+		console.warn(`Could not fetch fields for ${layer.name}, using basic text search:`, error);
+	}
+
+	// Get user-selected searchable fields for this layer
+	const selectedFields = mapStore.getLayerSearchableFields(layer.id);
+
+	// Build WHERE clause for case-insensitive field searching
+	let whereClause = '1=1';
+	if (text && fields.length > 0) {
+		whereClause = buildCaseInsensitiveFieldSearch(
+			fields,
+			text,
+			selectedFields.size > 0 ? selectedFields : undefined
+		);
+	} else if (text) {
+		// Fallback to basic text search if fields not available
 		params.append('text', text);
 	}
+
 	if (where) {
-		params.append('where', where);
+		// Combine custom where with field search
+		whereClause = text && fields.length > 0 ? `(${whereClause}) AND (${where})` : where;
+	}
+
+	// Only add WHERE clause if we built one (don't add for basic text search)
+	if (whereClause !== '1=1' || where) {
+		params.append('where', whereClause);
 	}
 
 	const queryUrl = `${layer.serviceUrl}/${layer.layerId}/query?${params.toString()}`;
+
+	// Debug logging for enhanced search
+	console.log(`🔍 Enhanced Search Debug for "${layer.name}":`, {
+		layerId: layer.id,
+		searchTerm: text || 'none',
+		totalFields: fields.length,
+		selectedFields: selectedFields.size,
+		selectedFieldNames: Array.from(selectedFields),
+		whereClause: params.get('where') || 'using text parameter',
+		hasBasicTextSearch: params.has('text'),
+		queryUrl: queryUrl
+	});
 
 	try {
 		const response = await fetch(queryUrl);
