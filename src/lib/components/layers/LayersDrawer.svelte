@@ -9,13 +9,14 @@
 	} from '../../stores/mapStore.js';
 	import { fetchLayerFields, type LayerField } from '../../services/listService.js';
 	import { flip } from 'svelte/animate';
-	import { dndzone } from 'svelte-dnd-action';
+	import { dndzone, dragHandle, dragHandleZone } from 'svelte-dnd-action';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
 	let drawerOpen = false;
 
 	// Field selection state
-	let expandedFieldSections = new Set<string>(); // Track which layer field sections are expanded
-	let layerFields = new Map<string, LayerField[]>(); // Cache layer fields locally
+	let expandedFieldSections = new SvelteSet<string>(); // Track which layer field sections are expanded
+	let layerFields = new SvelteMap<string, LayerField[]>(); // Cache layer fields locally
 
 	let activeLayersList: Array<{
 		id: string;
@@ -75,7 +76,7 @@
 				loadLayerFields(layerId);
 			}
 		}
-		expandedFieldSections = new Set(expandedFieldSections); // Trigger reactivity
+		expandedFieldSections = new SvelteSet(expandedFieldSections); // Trigger reactivity
 	}
 
 	async function loadLayerFields(layerId: string) {
@@ -85,7 +86,7 @@
 		try {
 			const fields = await fetchLayerFields(layer);
 			layerFields.set(layerId, fields);
-			layerFields = new Map(layerFields); // Trigger reactivity
+			layerFields = new SvelteMap(layerFields); // Trigger reactivity
 		} catch (error) {
 			console.warn(`Failed to load fields for layer ${layer.name}:`, error);
 		}
@@ -159,18 +160,18 @@
 		{:else}
 			<div
 				class="layer-list"
-				use:dndzone={{
+				use:dragHandleZone={{
 					items: activeLayersList,
 					dragDisabled: false,
 					dropTargetStyle: {},
-					morphDisabled: true
+					morphDisabled: true,
 				}}
 				onconsider={handleDndConsider}
 				onfinalize={handleDndFinalize}
 			>
 				{#each activeLayersList as layer (layer.id)}
 					<div class="layer-item" animate:flip={{ duration: 200 }}>
-						<div class="drag-handle">
+						<div use:dragHandle class="drag-handle">
 							<svg
 								width="16"
 								height="16"
@@ -461,21 +462,10 @@
 		border-bottom: 1px solid #f3f4f6;
 		background: white;
 		transition: all 0.2s;
-		cursor: grab;
-		user-select: none;
-		-webkit-user-select: none;
-		-moz-user-select: none;
 	}
 
 	.layer-item:hover {
 		background: #f9fafb;
-	}
-
-	.layer-item:active {
-		cursor: grabbing;
-		background: #eff6ff;
-		border-color: #dbeafe;
-		box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 	}
 
 	.drag-handle {
@@ -490,7 +480,7 @@
 		-ms-user-select: none;
 	}
 
-	.layer-item:active .drag-handle {
+	.drag-handle:active {
 		cursor: grabbing;
 		color: #2563eb;
 	}
