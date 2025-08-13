@@ -7,6 +7,12 @@ import type { SearchableLayer, LayerField } from './listService.js';
 import { fetchLayerFields } from './listService.js';
 import type { SearchResult } from './searchService.js';
 import { processFeatureResult } from './searchService.js';
+import {
+	getLayerLinks,
+	generateLinkUrl,
+	shouldShowLink,
+	type LayerLink
+} from './layerLinksConfig.js';
 
 export interface ClickQueryOptions {
 	geometry: {
@@ -335,22 +341,34 @@ export async function queryFeaturesWithTextSearch(
 	});
 }
 
-/**
- * Format click query results for mobile display
- */
-export function formatClickResults(results: ClickQueryResult[]): {
+export interface FormattedFeature {
+	title: string;
+	subtitle?: string;
+	attributes: Array<{ key: string; value: string }>;
+	externalLinks: Array<{
+		label: string;
+		url: string;
+		description?: string;
+		icon?: string;
+	}>;
+}
+
+export interface FormattedLayerGroup {
+	layerName: string;
+	features: FormattedFeature[];
+}
+
+export interface FormattedClickResults {
 	title: string;
 	subtitle: string;
 	summary: string;
-	layerGroups: Array<{
-		layerName: string;
-		features: Array<{
-			title: string;
-			subtitle?: string;
-			attributes: Array<{ key: string; value: string }>;
-		}>;
-	}>;
-} {
+	layerGroups: FormattedLayerGroup[];
+}
+
+/**
+ * Format click query results for mobile display
+ */
+export function formatClickResults(results: ClickQueryResult[]): FormattedClickResults {
 	if (results.length === 0) {
 		return {
 			title: 'No Features Found',
@@ -371,11 +389,25 @@ export function formatClickResults(results: ClickQueryResult[]): {
 
 	const layerGroups = Array.from(layerMap.entries()).map(([layerName, features]) => ({
 		layerName,
-		features: features.map((feature) => ({
-			title: feature.displayName || 'Feature',
-			subtitle: feature.displayValue,
-			attributes: formatAttributes(feature.attributes)
-		}))
+		features: features.map((feature) => {
+			// Get external links for this layer
+			const layerLinks = getLayerLinks(feature.layerId);
+			const externalLinks = layerLinks
+				.filter((link) => shouldShowLink(link, feature.attributes))
+				.map((link) => ({
+					label: link.label,
+					url: generateLinkUrl(link.urlTemplate, feature.attributes),
+					description: link.description,
+					icon: link.icon
+				}));
+
+			return {
+				title: feature.displayName || 'Feature',
+				subtitle: feature.displayValue,
+				attributes: formatAttributes(feature.attributes),
+				externalLinks
+			};
+		})
 	}));
 
 	const totalFeatures = results.length;

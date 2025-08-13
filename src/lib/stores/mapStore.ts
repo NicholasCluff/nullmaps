@@ -1417,5 +1417,123 @@ export const mapStore = {
 			localStorage.removeItem(STORAGE_KEY);
 			console.log('🗑️ Cleared stored map state from localStorage');
 		}
+	},
+
+	// Add coordinate marker to map
+	addCoordinateMarker(longitude: number, latitude: number, coordinateInfo: string) {
+		const currentState = this.getCurrentState();
+		if (!currentState.map) return;
+
+		const map = currentState.map;
+		
+		// Remove any existing coordinate marker
+		this.clearCoordinateMarker();
+
+		const sourceId = 'coordinate-marker-source';
+		const layerId = 'coordinate-marker-layer';
+
+		// Add source for the coordinate marker
+		map.addSource(sourceId, {
+			type: 'geojson',
+			data: {
+				type: 'Feature',
+				geometry: {
+					type: 'Point',
+					coordinates: [longitude, latitude]
+				},
+				properties: {
+					coordinates: coordinateInfo,
+					type: 'coordinate-marker'
+				}
+			}
+		});
+
+		// Add marker layer with distinct styling
+		map.addLayer({
+			id: layerId,
+			type: 'circle',
+			source: sourceId,
+			paint: {
+				'circle-radius': 10,
+				'circle-color': '#10b981', // Emerald green
+				'circle-stroke-color': '#ffffff',
+				'circle-stroke-width': 3,
+				'circle-opacity': 0.9
+			}
+		});
+
+		// Add popup on click
+		map.on('click', layerId, (e) => {
+			if (e.features && e.features[0]) {
+				const feature = e.features[0];
+				const coordinates = feature.properties?.coordinates || 'Coordinate Location';
+				
+				// Create popup content
+				const popupHtml = `
+					<div style="padding: 8px; font-family: system-ui, sans-serif;">
+						<h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 600; color: #1f2937;">
+							📍 Coordinate Location
+						</h4>
+						<p style="margin: 0; font-size: 12px; color: #6b7280;">
+							${coordinates}
+						</p>
+					</div>
+				`;
+
+				// Create and show popup (simple implementation)
+				const popup = document.createElement('div');
+				popup.innerHTML = popupHtml;
+				popup.style.cssText = `
+					position: absolute;
+					background: white;
+					border-radius: 6px;
+					box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+					pointer-events: none;
+					z-index: 1000;
+					max-width: 200px;
+				`;
+				
+				document.body.appendChild(popup);
+				
+				// Position popup near the click
+				const rect = map.getContainer().getBoundingClientRect();
+				popup.style.left = (e.originalEvent.clientX - rect.left) + 'px';
+				popup.style.top = (e.originalEvent.clientY - rect.top - 60) + 'px';
+				
+				// Remove popup after 3 seconds
+				setTimeout(() => {
+					if (popup.parentNode) {
+						popup.parentNode.removeChild(popup);
+					}
+				}, 3000);
+			}
+		});
+
+		// Change cursor on hover
+		map.on('mouseenter', layerId, () => {
+			map.getCanvas().style.cursor = 'pointer';
+		});
+
+		map.on('mouseleave', layerId, () => {
+			map.getCanvas().style.cursor = '';
+		});
+	},
+
+	// Clear coordinate marker from map
+	clearCoordinateMarker() {
+		const currentState = this.getCurrentState();
+		if (!currentState.map) return;
+
+		const map = currentState.map;
+		const sourceId = 'coordinate-marker-source';
+		const layerId = 'coordinate-marker-layer';
+
+		// Remove layer and source if they exist
+		if (map.getLayer(layerId)) {
+			map.removeLayer(layerId);
+		}
+		if (map.getSource(sourceId)) {
+			map.removeSource(sourceId);
+		}
 	}
 };

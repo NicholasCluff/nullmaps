@@ -7,16 +7,22 @@
 		type SearchResult
 	} from '../../services/searchService.js';
 	import SearchResults from '../search/SearchResults.svelte';
+	import GoToCoordinate from './GoToCoordinate.svelte';
 
-	export let onMenuToggle = () => {};
+	interface Props {
+		onMenuToggle?: () => void;
+	}
 
-	let isSearchExpanded = false;
-	let searchQuery = '';
-	let searchResults: SearchResult[] = [];
-	let isSearching = false;
-	let searchError: string | null = null;
-	let showResults = false;
-	let searchInput: HTMLInputElement;
+	let { onMenuToggle = () => {} }: Props = $props();
+
+	let isSearchExpanded = $state(false);
+	let searchQuery = $state('');
+	let searchResults: SearchResult[] = $state([]);
+	let isSearching = $state(false);
+	let searchError: string | null = $state(null);
+	let showResults = $state(false);
+	let searchInput: HTMLInputElement | undefined = $state();
+	let isCoordinateDialogOpen = $state(false);
 
 	// Create debounced search function
 	const debouncedSearch = createDebouncedSearch(performSearch, 300);
@@ -29,6 +35,10 @@
 			// Focus the input when search is expanded
 			setTimeout(() => searchInput?.focus(), 100);
 		}
+	}
+
+	function toggleCoordinateDialog() {
+		isCoordinateDialogOpen = !isCoordinateDialogOpen;
 	}
 
 	function clearSearch() {
@@ -233,23 +243,48 @@
 					{/if}
 				</div>
 			{:else}
-				<button class="search-button" onclick={toggleSearch} aria-label="Open search">
-					<svg
-						width="20"
-						height="20"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="2"
-					>
-						<circle cx="11" cy="11" r="8"></circle>
-						<path d="m21 21-4.35-4.35"></path>
-					</svg>
-				</button>
+				<div class="action-buttons">
+					<button class="coordinate-button" onclick={toggleCoordinateDialog} aria-label="Go to coordinates">
+						<svg
+							width="18"
+							height="18"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle cx="12" cy="12" r="4"></circle>
+							<path d="M12 2v4"></path>
+							<path d="M12 18v4"></path>
+							<path d="M4.93 4.93l2.83 2.83"></path>
+							<path d="M16.24 16.24l2.83 2.83"></path>
+							<path d="M2 12h4"></path>
+							<path d="M18 12h4"></path>
+							<path d="M4.93 19.07l2.83-2.83"></path>
+							<path d="M16.24 7.76l2.83-2.83"></path>
+						</svg>
+					</button>
+					<button class="search-button" onclick={toggleSearch} aria-label="Open search">
+						<svg
+							width="20"
+							height="20"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+						>
+							<circle cx="11" cy="11" r="8"></circle>
+							<path d="m21 21-4.35-4.35"></path>
+						</svg>
+					</button>
+				</div>
 			{/if}
 		</div>
 	</div>
 </header>
+
+<!-- GoToCoordinate dialog -->
+<GoToCoordinate isOpen={isCoordinateDialogOpen} onClose={() => (isCoordinateDialogOpen = false)} />
 
 <style>
 	.app-header {
@@ -346,6 +381,13 @@
 		align-items: center;
 	}
 
+	.action-buttons {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.coordinate-button,
 	.search-button {
 		display: flex;
 		align-items: center;
@@ -360,6 +402,7 @@
 		transition: all 0.2s;
 	}
 
+	.coordinate-button:hover,
 	.search-button:hover {
 		background: rgba(0, 0, 0, 0.05);
 		color: #374151;

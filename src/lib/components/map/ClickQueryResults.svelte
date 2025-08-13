@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { ClickQueryResult } from '../../services/clickQueryService.js';
-	import { formatClickResults } from '../../services/clickQueryService.js';
+	import {
+		formatClickResults,
+		type FormattedClickResults
+	} from '../../services/clickQueryService.js';
 	import { mapStore } from '../../stores/mapStore.js';
 
 	interface Props {
@@ -15,7 +18,7 @@
 	let { results, loading, error, clickLocation, onClose }: Props = $props();
 
 	// Format results for display
-	const formattedResults = $derived(formatClickResults(results));
+	const formattedResults: FormattedClickResults = $derived(formatClickResults(results));
 	const hasResults = $derived(results.length > 0);
 
 	// Expand/collapse state for each layer group
@@ -220,6 +223,36 @@
 															<span class="attribute-key">{attr.key}:</span>
 															<span class="attribute-value">{attr.value}</span>
 														</div>
+													{/each}
+												</div>
+											{/if}
+
+											{#if feature.externalLinks && feature.externalLinks.length > 0}
+												<div class="external-links">
+													{#each feature.externalLinks as link (link.url)}
+														<a
+															href={link.url}
+															target="_blank"
+															rel="noopener noreferrer"
+															class="external-link"
+															title={link.description}
+														>
+															<span class="link-text">{link.label}</span>
+															<svg
+																class="external-icon"
+																width="12"
+																height="12"
+																viewBox="0 0 24 24"
+																fill="none"
+																stroke="currentColor"
+																stroke-width="2"
+															>
+																<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+																></path>
+																<polyline points="15,3 21,3 21,9"></polyline>
+																<line x1="10" y1="14" x2="21" y2="3"></line>
+															</svg>
+														</a>
 													{/each}
 												</div>
 											{/if}
@@ -524,6 +557,46 @@
 	.attribute-value {
 		color: #6b7280;
 		word-break: break-word;
+	}
+
+	.external-links {
+		padding: 8px 20px 12px 40px;
+		background: #f9fafb;
+		border-top: 1px solid #e5e7eb;
+	}
+
+	.external-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		background: #2563eb;
+		color: white;
+		text-decoration: none;
+		border-radius: 6px;
+		font-size: 12px;
+		font-weight: 500;
+		transition: all 0.2s;
+		margin-right: 8px;
+		margin-bottom: 4px;
+	}
+
+	.external-link:hover {
+		background: #1d4ed8;
+		transform: translateY(-1px);
+	}
+
+	.external-link:active {
+		transform: translateY(0);
+	}
+
+	.link-text {
+		line-height: 1;
+	}
+
+	.external-icon {
+		flex-shrink: 0;
+		opacity: 0.8;
 	}
 
 	/* Desktop optimizations */
